@@ -1,0 +1,6 @@
+python-telegram-bot[job-queue]>=21,<22
+anthropic>=0.40
+requests>=2.31
+python-dotenv>=1.0
+pytz>=2024.1
+tzdata>=2024.1

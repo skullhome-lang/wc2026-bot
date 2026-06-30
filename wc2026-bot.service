@@ -1,0 +1,14 @@
+[Unit]
+Description=WC2026 prediction tournament Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/wc2026-bot
+ExecStart=/opt/wc2026-bot/.venv/bin/python /opt/wc2026-bot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -76,10 +76,11 @@ class Fixture:
     dt: datetime | None        # время начала в локальном поясе (МСК)
     home: str                  # русское имя
     away: str                  # русское имя
-    stage: str                 # русская стадия
+    stage: str                 # русская стадия (для показа)
     status: str                # SCHEDULED, TIMED, IN_PLAY, FINISHED, ...
     home_en: str = ""
     away_en: str = ""
+    stage_code: str = ""       # код football-data: LAST_32, LAST_16, ... (для логики)
 
     @property
     def upcoming(self) -> bool:
@@ -116,6 +117,7 @@ def parse_fixtures(payload: dict, tz: str = "Europe/Moscow") -> list[Fixture]:
                 status=m.get("status", ""),
                 home_en=home_en,
                 away_en=away_en,
+                stage_code=m.get("stage", ""),
             )
         )
     out.sort(key=lambda f: (f.dt is None, f.dt or datetime.max.replace(tzinfo=timezone.utc)))

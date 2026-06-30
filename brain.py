@@ -125,16 +125,53 @@ def _model(fast: bool = False) -> str:
     return config.MODEL_FAST if fast else config.MODEL_MAIN
 
 
-def _complete(user_prompt: str, *, fast: bool = False, max_tokens: int = 600,
-              temperature: float = 1.0) -> str:
+def _complete(user_prompt: str, *, system: str = PERSONALITY, fast: bool = False,
+              max_tokens: int = 600, temperature: float = 1.0) -> str:
     msg = _get_client().messages.create(
         model=_model(fast),
         max_tokens=max_tokens,
         temperature=temperature,
-        system=PERSONALITY,
+        system=system,
         messages=[{"role": "user", "content": user_prompt}],
     )
     return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+def parse_intent(text: str, team_names: list[str]) -> dict:
+    """Разобрать вольный вопрос в структуру. Возвращает dict с ключом intent:
+    'scenario' (+teams), 'chance' (+player) или 'chat'."""
+    import json
+    import re
+
+    teams = ", ".join(team_names)
+    system = "Ты — парсер запросов. Отвечай ТОЛЬКО валидным JSON, без пояснений и текста вокруг."
+    prompt = (
+        "Определи намерение сообщения участника турнира прогнозов и верни JSON.\n"
+        "intent бывает:\n"
+        "• \"match\" — гипотеза про исход конкретного матча: «X обыграет Y», «если Y "
+        "проиграет X», «X победит Y». Укажи победителя и проигравшего.\n"
+        "• \"scenario\" — гипотеза вида «что будет, если команда дойдёт до стадии» "
+        "(одна или несколько команд, со стадиями).\n"
+        "• \"chance\" — вопрос про шансы участника (могу/может ли стать первым, какое место).\n"
+        "• \"chat\" — всё остальное.\n"
+        f"Известные команды (используй ровно эти написания): {teams}.\n"
+        "Стадии только из набора: 1/16, 1/8, 1/4, 1/2, финал, чемпион.\n"
+        "Форматы ответа (строго JSON):\n"
+        '{"intent":"match","winner":"Швеция","loser":"Франция"}\n'
+        '{"intent":"scenario","teams":{"Франция":"чемпион","Аргентина":"финал"}}\n'
+        '{"intent":"chance","player":"Кравченко"}\n'
+        '{"intent":"chat"}\n\n'
+        f"Сообщение: «{text}»\nJSON:"
+    )
+    raw = _complete(prompt, system=system, fast=True, max_tokens=200, temperature=0.0)
+    match = re.search(r"\{.*\}", raw, re.S)
+    if not match:
+        return {"intent": "chat"}
+    try:
+        data = json.loads(match.group(0))
+        return data if isinstance(data, dict) else {"intent": "chat"}
+    except (ValueError, TypeError):
+        return {"intent": "chat"}
 
 
 # --------------------------------------------------------------------------- #
@@ -152,6 +189,16 @@ def prematch_breakdown(match_info: str, stakes: str = "") -> str:
 
 def postmatch_summary(match_info: str, stakes: str = "", facts: str = "") -> str:
     return _complete(build_postmatch_prompt(match_info, stakes, facts))
+
+
+def scenario_comment(summary: str) -> str:
+    """Короткий дерзкий комментарий к УЖЕ ПОСЧИТАННОМУ результату. Числа не трогает."""
+    prompt = (
+        "Ниже ТОЧНЫЙ результат расчёта сценария (числа верные — не меняй их и не "
+        f"добавляй новых цифр или фактов):\n{summary}\n\n"
+        "Добавь короткий дерзкий комментарий по итогу — 1–2 предложения."
+    )
+    return _complete(prompt, temperature=0.6, max_tokens=300)
 
 
 def chat_reply(user_name: str, text: str, context: str = "",

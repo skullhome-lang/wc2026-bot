@@ -18,6 +18,7 @@ from telegram.ext import (
 
 import brain
 import config
+import scenario
 import sheet_reader
 import tournament
 from sheet_reader import predicted_label
@@ -46,6 +47,48 @@ def _in_target_chat(update: Update) -> bool:
     return update.effective_chat and update.effective_chat.id == config.TELEGRAM_CHAT_ID
 
 
+def _build_scenario_text(matrix: dict, people, scenario_map: dict, labels: dict) -> str:
+    """Детерминированная таблица итогов по сценарию (без LLM)."""
+    r1 = scenario.r1_map(people)
+    totals = scenario.compute_totals(matrix, r1, scenario_map)
+    current = {p.name: (p.total or 0) for p in people}
+    head = "📊 Сценарий: " + ", ".join(f"{t} → {labels.get(t, '?')}" for t in scenario_map)
+    lines = []
+    for i, (name, tot) in enumerate(totals, 1):
+        diff = round(tot - current.get(name, 0), 1)
+        mark = f" (+{diff})" if diff > 0 else ""
+        lines.append(f"{i}. {name} — {tot}{mark}")
+    return head + "\n\n" + "\n".join(lines)
+
+
+def _build_chance_text(people, me) -> str:
+    """Детерминированный вывод про шансы участника (без LLM)."""
+    info = scenario.chance_analysis(people, me)
+    text = (f"🎯 {me.name}: сейчас {info['current']} ({info['place']}-е место), "
+            f"максимум возможно {info['ceiling']}.\n")
+    if info["can_be_first"]:
+        text += (f"Математически первое место ещё достижимо: твой потолок ({info['ceiling']}) "
+                 f"не ниже текущих очков всех соперников. Лидер сейчас — {info['leader_name']} "
+                 f"({info['leader_current']}). Конкретный расклад проверь через /scenario.")
+    else:
+        names = ", ".join(f"{p.name} ({p.total})" for p in info["uncatchable"])
+        text += (f"Первое место уже не светит: даже твой потолок {info['ceiling']} меньше, чем "
+                 f"уже набрали: {names}. Этих не догнать.")
+    return text
+
+
+def _scenario_from_intent(matrix: dict, teams: dict):
+    """{'Франция':'чемпион'} -> (scenario{team:cum}, labels{team:word})."""
+    sc, labels = {}, {}
+    for team_query, stage_word in teams.items():
+        team = sheet_reader.find_team(matrix, str(team_query))
+        cum, key = scenario.stage_to_cum(str(stage_word))
+        if team and cum is not None:
+            sc[team] = cum
+            labels[team] = key or str(stage_word)
+    return sc, labels
+
+
 # --------------------------------------------------------------------------- #
 #  Команды                                                                    #
 # --------------------------------------------------------------------------- #
@@ -57,6 +100,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/next — ближайшие матчи\n"
         "/roast [запрос] — разнос таблицы или ответ на вопрос\n"
         "/team <команда> — кто поставил на эту команду\n"
+        "/scenario <расклад> — точный пересчёт таблицы (напр.: Аргентина чемпион, Франция финал)\n"
+        "/chance [фамилия] — можешь ли ещё стать первым\n"
         "/chatid — id этого чата (для настройки)\n\n"
         "А ещё я иногда сам влезаю с комментарием. Не обессудьте 😏"
     )
@@ -115,6 +160,46 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+async def cmd_scenario(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            "Зададим расклад — и я точно пересчитаю очки всех.\n"
+            "Пример: /scenario Аргентина чемпион, Франция финал, Испания 1/4\n"
+            "Стадии: 1/16, 1/8, 1/4, 1/2, финал, чемпион"
+        )
+        return
+    await _typing(context, update.effective_chat.id)
+    matrix = await asyncio.to_thread(tournament.potential)
+    people = await asyncio.to_thread(tournament.standings)
+    sc, labels, warns = scenario.parse_scenario(matrix, " ".join(context.args))
+    if not sc:
+        msg = "Не разобрал сценарий. " + ("; ".join(warns) if warns else "")
+        await update.message.reply_text(
+            msg + "\nПример: /scenario Аргентина чемпион, Франция финал")
+        return
+
+    table = _build_scenario_text(matrix, people, sc, labels)
+    if warns:
+        table += "\n\n⚠️ не разобрал: " + "; ".join(warns)
+    comment = await asyncio.to_thread(brain.scenario_comment, table)
+    await update.message.reply_text(table + "\n\n" + comment)
+
+
+async def cmd_chance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _typing(context, update.effective_chat.id)
+    people = await asyncio.to_thread(tournament.standings)
+    query = " ".join(context.args).strip() if context.args else (
+        update.message.from_user.first_name if update.message.from_user else "")
+    me = scenario.find_participant(people, query) if query else None
+    if not me:
+        await update.message.reply_text("Кого считаем? Укажи фамилию: /chance Кравченко")
+        return
+
+    summary = _build_chance_text(people, me)
+    comment = await asyncio.to_thread(brain.scenario_comment, summary)
+    await update.message.reply_text(summary + "\n\n" + comment)
+
+
 # --------------------------------------------------------------------------- #
 #  Живые реакции на сообщения                                                 #
 # --------------------------------------------------------------------------- #
@@ -132,8 +217,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and msg.reply_to_message.from_user.id == bot_id
     )
 
+    addressed = mentioned or replied
     # Без явного обращения вмешиваемся только в рабочем чате и лишь иногда
-    if not (mentioned or replied):
+    if not addressed:
         if not _in_target_chat(update):
             return
         if random.random() > config.REPLY_PROBABILITY:
@@ -143,6 +229,62 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = (msg.from_user.first_name if msg.from_user else None) or "Аноним"
     text_in = msg.text.replace(f"@{bot_username}", "").strip()
     people = await asyncio.to_thread(tournament.standings)
+
+    # При явном обращении пробуем понять «сценарий/шансы» и посчитать точно
+    if addressed:
+        matrix = await asyncio.to_thread(tournament.potential)
+        team_names = list(matrix.get("prediction", {}).keys())
+        intent = await asyncio.to_thread(brain.parse_intent, text_in, team_names)
+        kind = intent.get("intent")
+
+        if kind == "match" and intent.get("winner") and intent.get("loser"):
+            fixtures = await asyncio.to_thread(tournament.fixtures)
+            fx = scenario.find_fixture(fixtures, str(intent["winner"]), str(intent["loser"]))
+            if fx is None:
+                await msg.reply_text(
+                    f"Не нашёл матч {intent['winner']}–{intent['loser']} в ближайшем "
+                    "расписании — возможно, они не встречаются в этом раунде. Можно задать "
+                    "стадии напрямую: /scenario."
+                )
+                return
+            wk = sheet_reader._team_key(str(intent["winner"]))
+            if wk in (sheet_reader._team_key(fx.home), sheet_reader._team_key(fx.home_en)):
+                winner, loser = fx.home, fx.away
+            else:
+                winner, loser = fx.away, fx.home
+            w = sheet_reader.find_team(matrix, winner) or winner
+            l = sheet_reader.find_team(matrix, loser) or loser
+            sc, labels = scenario.match_scenario(w, l, fx.stage_code)
+            if not sc:
+                await msg.reply_text(
+                    "Это групповой этап — там вылет зависит от всей группы, такие расклады "
+                    "пока не считаю. В плейофф — без проблем."
+                )
+                return
+            header = f"⚽ {winner} обыгрывает {loser} ({fx.stage})\n\n"
+            table = header + _build_scenario_text(matrix, people, sc, labels)
+            comment = await asyncio.to_thread(brain.scenario_comment, table)
+            await msg.reply_text(table + "\n\n" + comment)
+            return
+
+        if kind == "scenario" and isinstance(intent.get("teams"), dict) and intent["teams"]:
+            sc, labels = _scenario_from_intent(matrix, intent["teams"])
+            if sc:
+                table = _build_scenario_text(matrix, people, sc, labels)
+                comment = await asyncio.to_thread(brain.scenario_comment, table)
+                await msg.reply_text(table + "\n\n" + comment)
+                return
+
+        if kind == "chance":
+            query = str(intent.get("player") or name)
+            me = scenario.find_participant(people, query)
+            if me:
+                summary = _build_chance_text(people, me)
+                comment = await asyncio.to_thread(brain.scenario_comment, summary)
+                await msg.reply_text(summary + "\n\n" + comment)
+                return
+
+    # Обычный разговор
     preds = await asyncio.to_thread(tournament.predictions_digest)
     ctx = brain.format_standings(people)
     reply = await asyncio.to_thread(brain.chat_reply, name, text_in, ctx, preds)
@@ -165,6 +307,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("next", cmd_next))
     app.add_handler(CommandHandler("roast", cmd_roast))
     app.add_handler(CommandHandler("team", cmd_team))
+    app.add_handler(CommandHandler("scenario", cmd_scenario))
+    app.add_handler(CommandHandler("chance", cmd_chance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
 

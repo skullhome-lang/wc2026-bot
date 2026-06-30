@@ -71,31 +71,37 @@ def parse_scenario(matrix: dict, text: str):
 
 
 # --- Логика конкретного матча (X обыграл Y) --------------------------------- #
-# Код стадии football-data -> накопительный потолок очков ЗА ВЫХОД в эту стадию.
-_REACHED_CUM = {
-    "LAST_32": 0.5, "LAST_16": 1.5, "QUARTER_FINALS": 3.5,
-    "SEMI_FINALS": 6.5, "FINAL": 6.5, "CHAMPION": 10.5,
-}
-_NEXT_STAGE = {
-    "LAST_32": "LAST_16", "LAST_16": "QUARTER_FINALS",
-    "QUARTER_FINALS": "SEMI_FINALS", "SEMI_FINALS": "FINAL", "FINAL": "CHAMPION",
-}
-_STAGE_WORD = {
-    "LAST_32": "1/16", "LAST_16": "1/8", "QUARTER_FINALS": "1/4",
-    "SEMI_FINALS": "1/2", "FINAL": "финал", "CHAMPION": "чемпион",
-}
+# Очки начисляются за ПОБЕДУ в раунде: 1/16=+0.5, 1/8=+1, 1/4=+2, 1/2=+3, финал=+4.
+# Победитель матча получает накопленное за победу в этой стадии; проигравший —
+# только за РАНЕЕ выигранные раунды (за этот матч — ноль).
+_WIN_CUM = {"LAST_32": 0.5, "LAST_16": 1.5, "QUARTER_FINALS": 3.5,
+            "SEMI_FINALS": 6.5, "FINAL": 10.5}
+_LOSE_CUM = {"LAST_32": 0.0, "LAST_16": 0.5, "QUARTER_FINALS": 1.5,
+             "SEMI_FINALS": 3.5, "FINAL": 6.5}
+_STAGE_WORD = {"LAST_32": "1/16", "LAST_16": "1/8", "QUARTER_FINALS": "1/4",
+               "SEMI_FINALS": "1/2", "FINAL": "финал"}
+_NEXT_WORD = {"LAST_32": "1/8", "LAST_16": "1/4", "QUARTER_FINALS": "1/2",
+              "SEMI_FINALS": "финал", "FINAL": "чемпионы"}
 
 
 def match_scenario(winner: str, loser: str, stage_code: str):
-    """Матч на стадии stage_code: победитель проходит дальше, проигравший вылетает.
-    Возвращает (scenario{team:cum}, labels{team:word}) или (None, None) для группы/неизвестной стадии."""
-    nxt = _NEXT_STAGE.get(stage_code)
-    if nxt is None:
+    """Матч на стадии stage_code: победитель идёт дальше (очки за победу в раунде),
+    проигравший вылетает (за этот раунд — ноль, остаётся лишь заработанное ранее)."""
+    if stage_code not in _WIN_CUM:
         return None, None
-    scenario = {winner: _REACHED_CUM[nxt], loser: _REACHED_CUM.get(stage_code, 0)}
-    win_word = "чемпион" if nxt == "CHAMPION" else f"в {_STAGE_WORD[nxt]}"
-    labels = {winner: win_word, loser: f"вылет в {_STAGE_WORD.get(stage_code, '?')}"}
+    scenario = {winner: _WIN_CUM[stage_code], loser: _LOSE_CUM[stage_code]}
+    win_word = "в чемпионы" if stage_code == "FINAL" else f"выход в {_NEXT_WORD[stage_code]}"
+    labels = {winner: win_word, loser: f"вылет в {_STAGE_WORD[stage_code]}"}
     return scenario, labels
+
+
+def potential_losers(matrix: dict, team: str, capped_cum: float):
+    """Кто теряет потенциал, если команда застрянет на capped_cum (например, вылетит).
+    Возвращает [(участник, сколько_очков_потенциала_теряет)] по убыванию."""
+    pred = matrix.get("prediction", {}).get(team, {})
+    out = [(p, round(v - capped_cum, 1)) for p, v in pred.items() if v and v > capped_cum]
+    out.sort(key=lambda x: -x[1])
+    return out
 
 
 def find_fixture(fixtures, team_a: str, team_b: str):

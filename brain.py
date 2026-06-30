@@ -191,14 +191,15 @@ def postmatch_summary(match_info: str, stakes: str = "", facts: str = "") -> str
     return _complete(build_postmatch_prompt(match_info, stakes, facts))
 
 
-def scenario_comment(summary: str) -> str:
-    """Короткий дерзкий комментарий к УЖЕ ПОСЧИТАННОМУ результату. Числа не трогает."""
+def scenario_comment(headline: str) -> str:
+    """Короткий дерзкий комментарий к уже посчитанному результату (таблицу не трогает)."""
     prompt = (
-        "Ниже ТОЧНЫЙ результат расчёта сценария (числа верные — не меняй их и не "
-        f"добавляй новых цифр или фактов):\n{summary}\n\n"
-        "Добавь короткий дерзкий комментарий по итогу — 1–2 предложения."
+        "Краткая выжимка из расчёта (полная таблица уже показана пользователю отдельно):\n"
+        f"{headline}\n\n"
+        "Добавь ОДНО-ДВА предложения дерзкого комментария. НЕ приводи таблицу, НЕ "
+        "перечисляй всех участников и НЕ выдумывай новых чисел."
     )
-    return _complete(prompt, temperature=0.6, max_tokens=300)
+    return _complete(prompt, temperature=0.6, max_tokens=180)
 
 
 def chat_reply(user_name: str, text: str, context: str = "",

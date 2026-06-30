@@ -47,11 +47,12 @@ def _in_target_chat(update: Update) -> bool:
     return update.effective_chat and update.effective_chat.id == config.TELEGRAM_CHAT_ID
 
 
-def _build_scenario_text(matrix: dict, people, scenario_map: dict, labels: dict) -> str:
+def _scenario_totals(matrix: dict, people, scenario_map: dict):
+    return scenario.compute_totals(matrix, scenario.r1_map(people), scenario_map)
+
+
+def _format_scenario(scenario_map: dict, labels: dict, totals, current: dict) -> str:
     """Детерминированная таблица итогов по сценарию (без LLM)."""
-    r1 = scenario.r1_map(people)
-    totals = scenario.compute_totals(matrix, r1, scenario_map)
-    current = {p.name: (p.total or 0) for p in people}
     head = "📊 Сценарий: " + ", ".join(f"{t} → {labels.get(t, '?')}" for t in scenario_map)
     lines = []
     for i, (name, tot) in enumerate(totals, 1):
@@ -59,6 +60,14 @@ def _build_scenario_text(matrix: dict, people, scenario_map: dict, labels: dict)
         mark = f" (+{diff})" if diff > 0 else ""
         lines.append(f"{i}. {name} — {tot}{mark}")
     return head + "\n\n" + "\n".join(lines)
+
+
+def _headline(totals, extra: str = "") -> str:
+    """Короткая выжимка для комментатора (чтобы он не переписывал всю таблицу)."""
+    top = ", ".join(f"{n} ({t})" for n, t in totals[:3])
+    if not top:
+        return extra
+    return "Топ: " + top + ((". " + extra) if extra else "")
 
 
 def _build_chance_text(people, me) -> str:
@@ -178,10 +187,12 @@ async def cmd_scenario(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg + "\nПример: /scenario Аргентина чемпион, Франция финал")
         return
 
-    table = _build_scenario_text(matrix, people, sc, labels)
+    totals = _scenario_totals(matrix, people, sc)
+    current = {p.name: (p.total or 0) for p in people}
+    table = _format_scenario(sc, labels, totals, current)
     if warns:
         table += "\n\n⚠️ не разобрал: " + "; ".join(warns)
-    comment = await asyncio.to_thread(brain.scenario_comment, table)
+    comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals))
     await update.message.reply_text(table + "\n\n" + comment)
 
 
@@ -261,17 +272,31 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "пока не считаю. В плейофф — без проблем."
                 )
                 return
-            header = f"⚽ {winner} обыгрывает {loser} ({fx.stage})\n\n"
-            table = header + _build_scenario_text(matrix, people, sc, labels)
-            comment = await asyncio.to_thread(brain.scenario_comment, table)
-            await msg.reply_text(table + "\n\n" + comment)
+            totals = _scenario_totals(matrix, people, sc)
+            current = {p.name: (p.total or 0) for p in people}
+            table = _format_scenario(sc, labels, totals, current)
+            losers = scenario.potential_losers(matrix, l, sc[l])
+            hurt = ""
+            if losers:
+                top_hurt = "\n".join(f"• {n}: −{d}" for n, d in losers[:6])
+                hurt = f"📉 Кто теряет потенциал (ставил {loser} глубже):\n{top_hurt}\n\n"
+            header = (
+                f"⚽ Если {winner} обыграет {loser} ({fx.stage}): {loser} вылетает.\n"
+                f"Текущие очки почти не двигаются — за проигранный матч очков не дают, "
+                f"а {winner} в этом матче мало кто ставил. Главный удар — по потенциалу:\n\n"
+            )
+            extra = f"Сильнее всех просел {losers[0][0]} (−{losers[0][1]})." if losers else ""
+            comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals, extra))
+            await msg.reply_text(header + hurt + table + "\n\n" + comment)
             return
 
         if kind == "scenario" and isinstance(intent.get("teams"), dict) and intent["teams"]:
             sc, labels = _scenario_from_intent(matrix, intent["teams"])
             if sc:
-                table = _build_scenario_text(matrix, people, sc, labels)
-                comment = await asyncio.to_thread(brain.scenario_comment, table)
+                totals = _scenario_totals(matrix, people, sc)
+                current = {p.name: (p.total or 0) for p in people}
+                table = _format_scenario(sc, labels, totals, current)
+                comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals))
                 await msg.reply_text(table + "\n\n" + comment)
                 return
 

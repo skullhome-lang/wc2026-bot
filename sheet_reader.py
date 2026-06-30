@@ -261,6 +261,51 @@ def stakes_for_match(matrix: dict, team_a: str, team_b: str) -> dict:
     return out
 
 
+def _team_key(name: str) -> str:
+    """Ключ для нечёткого сравнения названий команд (без дефисов/пробелов/регистра)."""
+    return "".join(ch for ch in (name or "").lower() if ch.isalnum())
+
+
+def find_team(matrix: dict, query: str) -> str | None:
+    """Найти команду в матрице по нечёткому запросу («Кот Дивуар» → «Кот-д'Ивуар»)."""
+    qk = _team_key(query)
+    if not qk:
+        return None
+    teams = list(matrix.get("prediction", {})) or list(matrix.get("remaining", {}))
+    for t in teams:                       # точное совпадение
+        if _team_key(t) == qk:
+            return t
+    for t in teams:                       # вхождение в любую сторону
+        tk = _team_key(t)
+        if tk and (qk in tk or tk in qk):
+            return t
+    return None
+
+
+def team_backers(matrix: dict, team: str, block: str = "prediction"):
+    """Кто поставил на команду: [(участник, очки-потолок)] по убыванию."""
+    data = matrix.get(block, {}).get(team, {})
+    lst = [(p, v) for p, v in data.items() if v and v > 0]
+    lst.sort(key=lambda x: (-x[1], x[0]))
+    return lst
+
+
+def format_predictions_digest(matrix: dict, block: str = "prediction") -> str:
+    """Компактный конспект «кто на кого ставил» по всем командам (только ненулевые)."""
+    lines = []
+    for team, data in matrix.get(block, {}).items():
+        backers = [(p, v) for p, v in data.items() if v and v > 0]
+        if not backers:
+            continue
+        backers.sort(key=lambda x: (-x[1], x[0]))
+        parts = [
+            f"{p} ({v}{', ' + predicted_label(v) if predicted_label(v) else ''})"
+            for p, v in backers
+        ]
+        lines.append(f"{team}: " + ", ".join(parts))
+    return "\n".join(lines)
+
+
 def get_potential() -> dict:
     return parse_potential_matrix(fetch_csv(GID_POTENTIAL))
 

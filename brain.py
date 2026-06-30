@@ -56,13 +56,20 @@ def format_standings(people: list[Participant]) -> str:
     return "\n".join(lines)
 
 
-def build_roast_prompt(people: list[Participant], event_note: str = "") -> str:
-    note = f"\nПовод / свежие события:\n{event_note}\n" if event_note else ""
+def build_roast_prompt(people: list[Participant], event_note: str = "",
+                       predictions: str = "") -> str:
+    note = f"\nПовод / запрос:\n{event_note}\n" if event_note else ""
+    preds = (
+        f"\nКто на кого ставил (команда: участники с потолком очков):\n{predictions}\n"
+        if predictions else ""
+    )
     return (
         "Текущая турнирная таблица:\n"
-        f"{format_standings(people)}\n{note}\n"
-        "Напиши дерзкий разбор расклада для группы: пройдись по лидеру и аутсайдеру, "
-        "подметь что-то смешное в цифрах, подколи 1–2 участников. 3–5 предложений."
+        f"{format_standings(people)}\n{note}{preds}\n"
+        "Если выше есть запрос — ответь на него дерзко и по делу; иначе сделай общий "
+        "разбор расклада (лидер, аутсайдер, смешное в цифрах, подколи 1–2 участников). "
+        "Опирайся ТОЛЬКО на приведённые данные, не выдумывай. Если спрашивают, кто ставил "
+        "на команду — бери из раздела «кто на кого ставил». 3–6 предложений."
     )
 
 
@@ -125,8 +132,9 @@ def _complete(user_prompt: str, *, fast: bool = False, max_tokens: int = 600,
 # --------------------------------------------------------------------------- #
 #  ПУБЛИЧНЫЕ ГЕНЕРАТОРЫ                                                        #
 # --------------------------------------------------------------------------- #
-def standings_roast(people: list[Participant], event_note: str = "") -> str:
-    return _complete(build_roast_prompt(people, event_note))
+def standings_roast(people: list[Participant], event_note: str = "",
+                    predictions: str = "") -> str:
+    return _complete(build_roast_prompt(people, event_note, predictions))
 
 
 def prematch_breakdown(match_info: str, stakes: str = "") -> str:
@@ -137,10 +145,13 @@ def postmatch_summary(match_info: str, stakes: str = "", facts: str = "") -> str
     return _complete(build_postmatch_prompt(match_info, stakes, facts))
 
 
-def chat_reply(user_name: str, text: str, context: str = "") -> str:
-    ctx = f"\nКонтекст турнира:\n{context}\n" if context else ""
+def chat_reply(user_name: str, text: str, context: str = "",
+               predictions: str = "") -> str:
+    ctx = f"\nТаблица:\n{context}\n" if context else ""
+    preds = f"\nКто на кого ставил:\n{predictions}\n" if predictions else ""
     prompt = (
-        f"Участник {user_name} написал в группе: «{text}»{ctx}\n"
-        "Ответь коротко и дерзко в своём стиле (1–3 предложения)."
+        f"Участник {user_name} написал в группе: «{text}»{ctx}{preds}\n"
+        "Ответь коротко и дерзко в своём стиле (1–3 предложения). Опирайся только на "
+        "данные выше, не выдумывай. Если спрашивают, кто на кого ставил — ответь по данным."
     )
-    return _complete(prompt, fast=True, max_tokens=300)
+    return _complete(prompt, fast=True, max_tokens=400)

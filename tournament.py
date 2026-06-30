@@ -65,3 +65,8 @@ def upcoming(within_hours: float = 48):
 
 def stakes(team_a: str, team_b: str):
     return sheet_reader.stakes_for_match(potential(), team_a, team_b)
+
+
+def predictions_digest() -> str:
+    """Компактный конспект «кто на кого ставил» — для ответов бота на такие вопросы."""
+    return sheet_reader.format_predictions_digest(potential())

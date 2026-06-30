@@ -18,6 +18,7 @@ from telegram.ext import (
 
 import brain
 import config
+import sheet_reader
 import tournament
 from sheet_reader import predicted_label
 
@@ -54,7 +55,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Команды:\n"
         "/table — текущий расклад с разбором\n"
         "/next — ближайшие матчи\n"
-        "/roast [имя] — разнос таблицы или конкретного игрока\n"
+        "/roast [запрос] — разнос таблицы или ответ на вопрос\n"
+        "/team <команда> — кто поставил на эту команду\n"
         "/chatid — id этого чата (для настройки)\n\n"
         "А ещё я иногда сам влезаю с комментарием. Не обессудьте 😏"
     )
@@ -84,9 +86,32 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_roast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _typing(context, update.effective_chat.id)
     people = await asyncio.to_thread(tournament.standings)
-    target = " ".join(context.args) if context.args else ""
-    note = f"Особенно пройдись по участнику: {target}" if target else ""
-    text = await asyncio.to_thread(brain.standings_roast, people, note)
+    preds = await asyncio.to_thread(tournament.predictions_digest)
+    query = " ".join(context.args).strip() if context.args else ""
+    note = f"Запрос от ведущего: {query}" if query else ""
+    text = await asyncio.to_thread(brain.standings_roast, people, note, preds)
+    await update.message.reply_text(text)
+
+
+async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Укажи команду: /team Кот-д'Ивуар")
+        return
+    await _typing(context, update.effective_chat.id)
+    query = " ".join(context.args).strip()
+    matrix = await asyncio.to_thread(tournament.potential)
+    team = sheet_reader.find_team(matrix, query)
+    if not team:
+        await update.message.reply_text(f"Не нашёл команду «{query}» в прогнозах 🤷")
+        return
+    backers = sheet_reader.team_backers(matrix, team)
+    backers_text = ", ".join(
+        f"{p} ({v}{', ' + predicted_label(v) if predicted_label(v) else ''})"
+        for p, v in backers
+    ) or "никто не ставил"
+    people = await asyncio.to_thread(tournament.standings)
+    note = f"Вопрос: кто поставил на {team}. Данные — на {team} поставили: {backers_text}."
+    text = await asyncio.to_thread(brain.standings_roast, people, note, "")
     await update.message.reply_text(text)
 
 
@@ -118,8 +143,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = (msg.from_user.first_name if msg.from_user else None) or "Аноним"
     text_in = msg.text.replace(f"@{bot_username}", "").strip()
     people = await asyncio.to_thread(tournament.standings)
+    preds = await asyncio.to_thread(tournament.predictions_digest)
     ctx = brain.format_standings(people)
-    reply = await asyncio.to_thread(brain.chat_reply, name, text_in, ctx)
+    reply = await asyncio.to_thread(brain.chat_reply, name, text_in, ctx, preds)
     await msg.reply_text(reply)
 
 
@@ -138,6 +164,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler(["table", "standings"], cmd_table))
     app.add_handler(CommandHandler("next", cmd_next))
     app.add_handler(CommandHandler("roast", cmd_roast))
+    app.add_handler(CommandHandler("team", cmd_team))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
 

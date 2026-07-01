@@ -142,6 +142,23 @@ def find_result(matches, team_a: str, team_b: str):
     return cands[0]
 
 
+_KNOCKOUT_STAGES = {"LAST_32", "LAST_16", "QUARTER_FINALS", "SEMI_FINALS", "FINAL"}
+
+
+def eliminated_teams(matches) -> set:
+    """Русские названия команд, вылетевших в плейофф (проигравших матч на вылет)."""
+    import schedule_source
+
+    out = set()
+    for m in matches:
+        if m.stage in _KNOCKOUT_STAGES and m.played and m.winner:
+            wk = sheet_reader._team_key(m.winner)
+            for team in (m.home, m.away):
+                if sheet_reader._team_key(team) != wk:
+                    out.add(schedule_source.normalize_team(team))
+    return out
+
+
 def format_result(m) -> str:
     """Строка с результатом матча (русские названия)."""
     import schedule_source

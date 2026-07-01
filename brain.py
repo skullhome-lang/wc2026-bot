@@ -153,10 +153,24 @@ def _complete(user_prompt: str, *, system: str = PERSONALITY, fast: bool = False
         model=_model(fast),
         max_tokens=max_tokens,
         temperature=temperature,
-        system=system,
+        # Кэшируем системный промпт (−90% на входе при частых вызовах).
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_prompt}],
     )
     return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+def news_digest(items: list[dict]) -> str:
+    """Короткая сводка новостей (3–4 строки) в стиле бота. Работает на Haiku."""
+    if not items:
+        return ""
+    heads = "\n".join(f"- {it['title']}" for it in items[:8])
+    prompt = (
+        "Свежие футбольные заголовки:\n" + heads + "\n\n"
+        "Сделай КОРОТКУЮ сводку в 3–4 строки в своём дерзком стиле по паре самых интересных. "
+        "Опирайся ТОЛЬКО на заголовки, деталей не выдумывай. Без длинных списков."
+    )
+    return _complete(prompt, fast=True, max_tokens=350, temperature=0.7)
 
 
 def parse_intent(text: str, team_names: list[str]) -> dict:
@@ -186,6 +200,8 @@ def parse_intent(text: str, team_names: list[str]) -> dict:
         "• \"botbracket\" — просят СЕТКУ бота до чемпиона или его чемпиона турнира: «твоя "
         "сетка», «твой прогноз до чемпиона», «кто по-твоему выиграет турнир», «кого ставишь "
         "в чемпионы». Без полей.\n"
+        "• \"news\" — просят новости футбола: «что нового», «новости», «что там в мире "
+        "футбола». Без полей.\n"
         "• \"scenario\" — насколько ДАЛЕКО пройдёт команда (до стадии): «дойдёт до финала», "
         "«станет чемпионом». Только когда явно про стадию и без второй команды-соперника.\n"
         "• \"chance\" — про шансы участника (могу ли стать первым, какое место).\n"
@@ -202,6 +218,7 @@ def parse_intent(text: str, team_names: list[str]) -> dict:
         '«кого бы ты поставил» -> {"intent":"botpick"}\n'
         '«твоя сетка до чемпиона» -> {"intent":"botbracket"}\n'
         '«кто по-твоему станет чемпионом» -> {"intent":"botbracket"}\n'
+        '«что нового в футболе» -> {"intent":"news"}\n'
         '«если Франция станет чемпионом» -> {"intent":"scenario","teams":{"Франция":"чемпион"}}\n'
         '«могу ли я стать первым» -> {"intent":"chance","player":"Кравченко"}\n'
         '«как настроение» -> {"intent":"chat"}\n\n'

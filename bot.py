@@ -141,6 +141,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/chance [фамилия] — можешь ли ещё стать первым\n"
         "/botpick [матч] — мой прогноз по котировкам против ваших ставок\n"
         "/botbracket — моя сетка до чемпиона по котировкам\n"
+        "/news — короткая сводка футбольных новостей\n"
         "/iam <фамилия> — представиться, чтобы я узнавал тебя без @\n"
         "/chatid — id этого чата (для настройки)\n\n"
         "А ещё я иногда сам влезаю с комментарием. Не обессудьте 😏"
@@ -399,6 +400,16 @@ async def cmd_botbracket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text + "\n\n" + comment)
 
 
+async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _typing(context, update.effective_chat.id)
+    items = await asyncio.to_thread(tournament.news)
+    if not items:
+        await update.message.reply_text("Свежих новостей не нашёл (лента недоступна или пуста).")
+        return
+    text = await asyncio.to_thread(brain.news_digest, items)
+    await update.message.reply_text("📰 " + text)
+
+
 # --------------------------------------------------------------------------- #
 #  Живые реакции на сообщения                                                 #
 # --------------------------------------------------------------------------- #
@@ -503,6 +514,15 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text(text + "\n\n" + comment)
             return
 
+        if kind == "news":
+            items = await asyncio.to_thread(tournament.news)
+            if not items:
+                await msg.reply_text("Свежих новостей не нашёл.")
+                return
+            text = await asyncio.to_thread(brain.news_digest, items)
+            await msg.reply_text("📰 " + text)
+            return
+
         if kind == "result" and intent.get("team_a") and intent.get("team_b"):
             matches = await asyncio.to_thread(tournament.matches)
             m = scenario.find_result(matches, str(intent["team_a"]), str(intent["team_b"]))
@@ -570,6 +590,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("chance", cmd_chance))
     app.add_handler(CommandHandler(["botpick", "bot"], cmd_botpick))
     app.add_handler(CommandHandler(["botbracket", "bracket"], cmd_botbracket))
+    app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
 

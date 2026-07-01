@@ -36,6 +36,13 @@ FOOTBALL_DATA_API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY") or None
 # --- Котировки букмекеров (the-odds-api.com, бесплатный ключ) ---
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY") or None
 
+# --- Новости (RSS-ленты футбола, без ключей) ---
+_DEFAULT_RSS = (
+    "https://www.championat.com/rss/news/football/,"
+    "https://rsport.ria.ru/export/rss2/football/index.xml"
+)
+NEWS_RSS = [u.strip() for u in os.environ.get("NEWS_RSS", _DEFAULT_RSS).split(",") if u.strip()]
+
 # --- Поведение ---
 TIMEZONE = os.environ.get("TIMEZONE", "Europe/Moscow")
 ANNOUNCE_HOURS_BEFORE = float(os.environ.get("ANNOUNCE_HOURS_BEFORE", "3"))

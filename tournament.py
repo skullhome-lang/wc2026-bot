@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 
 import config
+import news_source
 import odds_source
 import schedule_source
 import sheet_reader
@@ -88,3 +89,10 @@ def outrights(ttl: float = 3600):
     if not config.ODDS_API_KEY:
         return []
     return _cached("outrights", ttl, lambda: odds_source.fetch_outrights(config.ODDS_API_KEY))
+
+
+def news(ttl: float = 1800):
+    """Свежие футбольные заголовки из RSS (кэш 30 мин)."""
+    if not config.NEWS_RSS:
+        return []
+    return _cached("news", ttl, lambda: news_source.fetch_news(config.NEWS_RSS))

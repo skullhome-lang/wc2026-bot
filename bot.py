@@ -67,6 +67,18 @@ def _scenario_totals(matrix: dict, people, scenario_map: dict):
     return scenario.compute_totals(matrix, scenario.r1_map(people), scenario_map)
 
 
+async def _scenario_totals_full(matrix: dict, people, overrides: dict):
+    """Полный сценарий: неуказанные матчи достраиваются по сетке бота (котировки).
+    Возвращает (totals, used_full). Без котировок — точечный расчёт, как раньше."""
+    ranked = await asyncio.to_thread(tournament.outrights)
+    r1 = scenario.r1_map(people)
+    if ranked:
+        matches = await asyncio.to_thread(tournament.matches)
+        full = scenario.build_full_scenario(matrix, matches, ranked, overrides)
+        return scenario.compute_totals(matrix, r1, full), True
+    return scenario.compute_totals(matrix, r1, overrides), False
+
+
 def _format_scenario(scenario_map: dict, labels: dict, totals, current: dict) -> str:
     """Детерминированная таблица итогов по сценарию (без LLM)."""
     head = "📊 Сценарий: " + ", ".join(f"{t} → {labels.get(t, '?')}" for t in scenario_map)
@@ -235,11 +247,13 @@ async def cmd_scenario(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg + "\nПример: /scenario Аргентина чемпион, Франция финал")
         return
 
-    totals = _scenario_totals(matrix, people, sc)
+    totals, used_full = await _scenario_totals_full(matrix, people, sc)
     current = {p.name: (p.total or 0) for p in people}
     table = _format_scenario(sc, labels, totals, current)
+    if used_full:
+        table += "\n\n(остальные матчи плейофф достроены по моей сетке по котировкам)"
     if warns:
-        table += "\n\n⚠️ не разобрал: " + "; ".join(warns)
+        table += "\n⚠️ не разобрал: " + "; ".join(warns)
     comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals))
     await update.message.reply_text(table + "\n\n" + comment)
 
@@ -506,9 +520,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if kind == "scenario" and isinstance(intent.get("teams"), dict) and intent["teams"]:
             sc, labels = _scenario_from_intent(matrix, intent["teams"])
             if sc:
-                totals = _scenario_totals(matrix, people, sc)
+                totals, used_full = await _scenario_totals_full(matrix, people, sc)
                 current = {p.name: (p.total or 0) for p in people}
                 table = _format_scenario(sc, labels, totals, current)
+                if used_full:
+                    table += "\n\n(остальные матчи достроены по моей сетке по котировкам)"
                 comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals))
                 await msg.reply_text(table + "\n\n" + comment)
                 return

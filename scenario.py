@@ -159,6 +159,62 @@ def eliminated_teams(matches) -> set:
     return out
 
 
+def eliminated_final_cum(matches) -> dict:
+    """Итоговые очки уже вылетевших команд (за раунд вылета), русские имена."""
+    import schedule_source
+
+    out = {}
+    for m in matches:
+        if m.stage in _KNOCKOUT_STAGES and m.played and m.winner:
+            wk = sheet_reader._team_key(m.winner)
+            for team in (m.home, m.away):
+                if sheet_reader._team_key(team) != wk:
+                    out[schedule_source.normalize_team(team)] = _LOSE_CUM.get(m.stage, 0.0)
+    return out
+
+
+# Сколько команд доходит до каждой глубины (по очкам) в оставшейся сетке.
+_DEPTH_SLOTS = {10.5: 1, 6.5: 1, 3.5: 2, 1.5: 4, 0.5: 8}
+_DEPTH_ORDER = [10.5, 6.5, 3.5, 1.5, 0.5]
+
+
+def build_full_scenario(matrix: dict, matches, ranked_outrights, overrides: dict) -> dict:
+    """Полное распределение: каждая команда получает итоговую глубину.
+    Приоритет: 1) уже вылетевшие — их факт; 2) ручные overrides участника;
+    3) остальные живые — по сетке бота (рейтингу котировок на победителя)."""
+    all_teams = list(matrix.get("prediction", {}).keys())
+    result = {}
+
+    elim = eliminated_final_cum(matches)
+    for t in all_teams:
+        if t in elim:
+            result[t] = elim[t]
+    for t, cum in overrides.items():
+        result[t] = cum  # ручной приоритет
+
+    # оставшиеся слоты глубины после ручных overrides
+    slots = dict(_DEPTH_SLOTS)
+    for cum in overrides.values():
+        if cum in slots and slots[cum] > 0:
+            slots[cum] -= 1
+
+    rankpos = {t: i for i, (t, _) in enumerate(ranked_outrights)}
+    alive_left = sorted(
+        [t for t in all_teams if t not in result],
+        key=lambda t: rankpos.get(t, 10 ** 6),
+    )
+    idx = 0
+    for cum in _DEPTH_ORDER:
+        for _ in range(slots.get(cum, 0)):
+            if idx >= len(alive_left):
+                break
+            result[alive_left[idx]] = cum
+            idx += 1
+    for t in alive_left[idx:]:
+        result[t] = 0.0
+    return result
+
+
 def format_result(m) -> str:
     """Строка с результатом матча (русские названия)."""
     import schedule_source

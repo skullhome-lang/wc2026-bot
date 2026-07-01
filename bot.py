@@ -18,6 +18,7 @@ from telegram.ext import (
 
 import brain
 import config
+import identity
 import scenario
 import sheet_reader
 import tournament
@@ -45,6 +46,20 @@ def _in_target_chat(update: Update) -> bool:
     if config.TELEGRAM_CHAT_ID is None:
         return True
     return update.effective_chat and update.effective_chat.id == config.TELEGRAM_CHAT_ID
+
+
+def _resolve_participant(update: Update, people):
+    """Кто написал: сначала по сохранённой связке user_id (/iam), иначе по имени Telegram."""
+    user = update.effective_user
+    if user is None:
+        return None
+    saved = identity.get_name(user.id)
+    if saved:
+        p = scenario.find_participant(people, saved)
+        if p:
+            return p
+    guess = ((user.first_name or "") + " " + (user.last_name or "")).strip()
+    return scenario.find_participant(people, guess) if guess else None
 
 
 def _scenario_totals(matrix: dict, people, scenario_map: dict):
@@ -111,6 +126,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/team <команда> — кто поставил на эту команду\n"
         "/scenario <расклад> — точный пересчёт таблицы (напр.: Аргентина чемпион, Франция финал)\n"
         "/chance [фамилия] — можешь ли ещё стать первым\n"
+        "/iam <фамилия> — представиться, чтобы я узнавал тебя без @\n"
         "/chatid — id этого чата (для настройки)\n\n"
         "А ещё я иногда сам влезаю с комментарием. Не обессудьте 😏"
     )
@@ -118,6 +134,33 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"chat_id: {update.effective_chat.id}")
+
+
+async def cmd_iam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Представься фамилией из таблицы, напр.: /iam Кравченко")
+        return
+    people = await asyncio.to_thread(tournament.standings)
+    query = " ".join(context.args).strip()
+    p = scenario.find_participant(people, query)
+    if not p:
+        await update.message.reply_text(
+            f"Не нашёл «{query}» среди участников. Напиши фамилию как в таблице: /iam Кравченко"
+        )
+        return
+    identity.set_name(update.effective_user.id, p.name)
+    await update.message.reply_text(
+        f"Готово, узнал тебя: {p.avatar} {p.name}. Теперь буду обращаться по-человечески 👌"
+    )
+
+
+async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    people = await asyncio.to_thread(tournament.standings)
+    p = _resolve_participant(update, people)
+    if p:
+        await update.message.reply_text(f"Ты у меня записан как {p.avatar} {p.name}.")
+    else:
+        await update.message.reply_text("Пока не знаю, кто ты. Представься: /iam Фамилия")
 
 
 async def cmd_table(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,11 +244,14 @@ async def cmd_scenario(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_chance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _typing(context, update.effective_chat.id)
     people = await asyncio.to_thread(tournament.standings)
-    query = " ".join(context.args).strip() if context.args else (
-        update.message.from_user.first_name if update.message.from_user else "")
-    me = scenario.find_participant(people, query) if query else None
+    if context.args:
+        me = scenario.find_participant(people, " ".join(context.args).strip())
+    else:
+        me = _resolve_participant(update, people)
     if not me:
-        await update.message.reply_text("Кого считаем? Укажи фамилию: /chance Кравченко")
+        await update.message.reply_text(
+            "Не понял, кто ты. Представься командой /iam Фамилия — или укажи: /chance Кравченко"
+        )
         return
 
     summary = _build_chance_text(people, me)
@@ -235,9 +281,10 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return  # бот молчит, пока к нему явно не обратятся (@упоминание или ответ ему)
 
     await _typing(context, msg.chat_id)
-    name = (msg.from_user.first_name if msg.from_user else None) or "Аноним"
     text_in = msg.text.replace(f"@{bot_username}", "").strip()
     people = await asyncio.to_thread(tournament.standings)
+    speaker = _resolve_participant(update, people)
+    name = speaker.name if speaker else ((msg.from_user.first_name if msg.from_user else None) or "Аноним")
 
     # При явном обращении пробуем понять «сценарий/шансы» и посчитать точно
     if addressed:
@@ -313,13 +360,15 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         if kind == "chance":
-            query = str(intent.get("player") or name)
-            me = scenario.find_participant(people, query)
-            if me:
-                summary = _build_chance_text(people, me)
+            target = intent.get("player")
+            who = scenario.find_participant(people, str(target)) if target else speaker
+            if who:
+                summary = _build_chance_text(people, who)
                 comment = await asyncio.to_thread(brain.scenario_comment, summary)
                 await msg.reply_text(summary + "\n\n" + comment)
                 return
+            await msg.reply_text("Не понял, про кого шанс. Представься: /iam Фамилия")
+            return
 
     # Обычный разговор
     preds = await asyncio.to_thread(tournament.predictions_digest)
@@ -341,6 +390,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
+    app.add_handler(CommandHandler(["iam", "me"], cmd_iam))
+    app.add_handler(CommandHandler("whoami", cmd_whoami))
     app.add_handler(CommandHandler(["table", "standings"], cmd_table))
     app.add_handler(CommandHandler("next", cmd_next))
     app.add_handler(CommandHandler("roast", cmd_roast))

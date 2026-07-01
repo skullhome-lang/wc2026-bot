@@ -289,6 +289,36 @@ def _find_event_in_text(events, text: str):
     return None
 
 
+def _botpick_list_text(events, limit: int = 6) -> str:
+    lines = [
+        f"• {e['home']} — {e['away']}: ставлю на {e['favorite']} ({odds_source.pct(e['fav_prob'])})"
+        for e in events[:limit]
+    ]
+    return "🤖 Мои прогнозы по котировкам:\n" + "\n".join(lines)
+
+
+def _botpick_compare_text(matrix: dict, events, participant_name: str, limit: int = 5) -> str:
+    """Сравнение: фаворит бота (котировки) против ставки участника по каждому матчу."""
+    pred = matrix.get("prediction", {})
+    lines = []
+    for e in events[:limit]:
+        home = sheet_reader.find_team(matrix, e["home"]) or e["home"]
+        away = sheet_reader.find_team(matrix, e["away"]) or e["away"]
+        vh = pred.get(home, {}).get(participant_name) or 0
+        va = pred.get(away, {}).get(participant_name) or 0
+        if vh or va:
+            your = home if vh >= va else away
+            same = sheet_reader._team_key(your) == sheet_reader._team_key(e["favorite"])
+            your_txt = f"ты: {your} ({'✅ как я' if same else '🔻 против рынка'})"
+        else:
+            your_txt = "ты: не ставил"
+        lines.append(
+            f"• {e['home']} — {e['away']}: я → {e['favorite']} "
+            f"({odds_source.pct(e['fav_prob'])}); {your_txt}"
+        )
+    return f"🤖 Мои фавориты по котировкам против ставок ({participant_name}):\n" + "\n".join(lines)
+
+
 async def cmd_botpick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _typing(context, update.effective_chat.id)
     events = await asyncio.to_thread(tournament.odds)
@@ -306,11 +336,9 @@ async def cmd_botpick(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text = _botpick_match_text(matrix, e)
     else:
-        lines = [
-            f"• {e['home']} — {e['away']}: ставлю на {e['favorite']} ({odds_source.pct(e['fav_prob'])})"
-            for e in events[:6]
-        ]
-        text = "🤖 Мои прогнозы по котировкам:\n" + "\n".join(lines)
+        people = await asyncio.to_thread(tournament.standings)
+        me = _resolve_participant(update, people)
+        text = _botpick_compare_text(matrix, events, me.name) if me else _botpick_list_text(events)
     comment = await asyncio.to_thread(brain.scenario_comment, text)
     await update.message.reply_text(text + "\n\n" + comment)
 
@@ -401,12 +429,10 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 e = odds_source.match_favorite(events, str(intent["team_a"]), str(intent["team_b"]))
             if e is not None:
                 text = _botpick_match_text(matrix, e)
+            elif speaker:
+                text = _botpick_compare_text(matrix, events, speaker.name)
             else:
-                lines = [
-                    f"• {x['home']} — {x['away']}: {x['favorite']} ({odds_source.pct(x['fav_prob'])})"
-                    for x in events[:6]
-                ]
-                text = "🤖 Мои прогнозы по котировкам:\n" + "\n".join(lines)
+                text = _botpick_list_text(events)
             comment = await asyncio.to_thread(brain.scenario_comment, text)
             await msg.reply_text(text + "\n\n" + comment)
             return

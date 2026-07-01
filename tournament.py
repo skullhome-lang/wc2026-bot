@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 
 import config
+import odds_source
 import schedule_source
 import sheet_reader
 
@@ -70,3 +71,13 @@ def stakes(team_a: str, team_b: str):
 def predictions_digest() -> str:
     """Компактный конспект «кто на кого ставил» — для ответов бота на такие вопросы."""
     return sheet_reader.format_predictions_digest(potential())
+
+
+def odds(ttl: float = 1800):
+    """Котировки букмекеров на матчи ЧМ (пусто, если ключ не задан)."""
+    if not config.ODDS_API_KEY:
+        return []
+    return _cached(
+        "odds", ttl,
+        lambda: odds_source.parse_events(odds_source.fetch_odds(config.ODDS_API_KEY)),
+    )

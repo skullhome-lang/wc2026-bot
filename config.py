@@ -33,6 +33,9 @@ GID_POTENTIAL = os.environ.get("GID_POTENTIAL") or None  # матрица «у �
 # --- Расписание (football-data.org, бесплатный ключ) ---
 FOOTBALL_DATA_API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY") or None
 
+# --- Котировки букмекеров (the-odds-api.com, бесплатный ключ) ---
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY") or None
+
 # --- Поведение ---
 TIMEZONE = os.environ.get("TIMEZONE", "Europe/Moscow")
 ANNOUNCE_HOURS_BEFORE = float(os.environ.get("ANNOUNCE_HOURS_BEFORE", "3"))

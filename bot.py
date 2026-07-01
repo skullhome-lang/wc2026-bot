@@ -19,6 +19,7 @@ from telegram.ext import (
 import brain
 import config
 import identity
+import odds_source
 import scenario
 import sheet_reader
 import tournament
@@ -126,6 +127,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/team <команда> — кто поставил на эту команду\n"
         "/scenario <расклад> — точный пересчёт таблицы (напр.: Аргентина чемпион, Франция финал)\n"
         "/chance [фамилия] — можешь ли ещё стать первым\n"
+        "/botpick [матч] — мой прогноз по котировкам против ваших ставок\n"
         "/iam <фамилия> — представиться, чтобы я узнавал тебя без @\n"
         "/chatid — id этого чата (для настройки)\n\n"
         "А ещё я иногда сам влезаю с комментарием. Не обессудьте 😏"
@@ -259,6 +261,60 @@ async def cmd_chance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(summary + "\n\n" + comment)
 
 
+def _botpick_match_text(matrix: dict, e: dict) -> str:
+    """Детерминированный расклад по матчу: прогноз бота (фаворит по котировкам) + кто на кого ставил."""
+    home = sheet_reader.find_team(matrix, e["home"]) or e["home"]
+    away = sheet_reader.find_team(matrix, e["away"]) or e["away"]
+
+    def who(team):
+        lst = scenario.team_backers(matrix, team)
+        return ", ".join(n for n, _ in lst[:6]) or "никто"
+
+    return (
+        f"🤖 Мой прогноз на {e['home']} — {e['away']}: ставлю на {e['favorite']} "
+        f"({odds_source.pct(e['fav_prob'])}).\n"
+        f"Котировки: {e['home']} {odds_source.pct(e['p_home'])}, ничья "
+        f"{odds_source.pct(e['p_draw'])}, {e['away']} {odds_source.pct(e['p_away'])}.\n"
+        f"На {e['home']} ставили: {who(home)}. На {e['away']}: {who(away)}."
+    )
+
+
+def _find_event_in_text(events, text: str):
+    tk = sheet_reader._team_key(text)
+    for e in events:
+        hk = {sheet_reader._team_key(e["home"]), sheet_reader._team_key(e["home_en"])}
+        ak = {sheet_reader._team_key(e["away"]), sheet_reader._team_key(e["away_en"])}
+        if any(k and k in tk for k in hk) and any(k and k in tk for k in ak):
+            return e
+    return None
+
+
+async def cmd_botpick(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _typing(context, update.effective_chat.id)
+    events = await asyncio.to_thread(tournament.odds)
+    if not events:
+        await update.message.reply_text(
+            "Котировки пока не подключены (нет ключа ODDS_API_KEY) или матчей в ближайшее "
+            "время нет. Как подключим — начну прогнозировать."
+        )
+        return
+    matrix = await asyncio.to_thread(tournament.potential)
+    if context.args:
+        e = _find_event_in_text(events, " ".join(context.args))
+        if not e:
+            await update.message.reply_text("Не нашёл такой матч в котировках. Попробуй: /botpick")
+            return
+        text = _botpick_match_text(matrix, e)
+    else:
+        lines = [
+            f"• {e['home']} — {e['away']}: ставлю на {e['favorite']} ({odds_source.pct(e['fav_prob'])})"
+            for e in events[:6]
+        ]
+        text = "🤖 Мои прогнозы по котировкам:\n" + "\n".join(lines)
+    comment = await asyncio.to_thread(brain.scenario_comment, text)
+    await update.message.reply_text(text + "\n\n" + comment)
+
+
 # --------------------------------------------------------------------------- #
 #  Живые реакции на сообщения                                                 #
 # --------------------------------------------------------------------------- #
@@ -335,6 +391,26 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text(header + hurt + table + "\n\n" + comment)
             return
 
+        if kind == "botpick":
+            events = await asyncio.to_thread(tournament.odds)
+            if not events:
+                await msg.reply_text("Котировки пока не подключены — прогноз дать не могу.")
+                return
+            e = None
+            if intent.get("team_a") and intent.get("team_b"):
+                e = odds_source.match_favorite(events, str(intent["team_a"]), str(intent["team_b"]))
+            if e is not None:
+                text = _botpick_match_text(matrix, e)
+            else:
+                lines = [
+                    f"• {x['home']} — {x['away']}: {x['favorite']} ({odds_source.pct(x['fav_prob'])})"
+                    for x in events[:6]
+                ]
+                text = "🤖 Мои прогнозы по котировкам:\n" + "\n".join(lines)
+            comment = await asyncio.to_thread(brain.scenario_comment, text)
+            await msg.reply_text(text + "\n\n" + comment)
+            return
+
         if kind == "result" and intent.get("team_a") and intent.get("team_b"):
             matches = await asyncio.to_thread(tournament.matches)
             m = scenario.find_result(matches, str(intent["team_a"]), str(intent["team_b"]))
@@ -398,6 +474,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("team", cmd_team))
     app.add_handler(CommandHandler("scenario", cmd_scenario))
     app.add_handler(CommandHandler("chance", cmd_chance))
+    app.add_handler(CommandHandler(["botpick", "bot"], cmd_botpick))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
 

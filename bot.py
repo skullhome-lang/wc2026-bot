@@ -229,12 +229,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     addressed = mentioned or replied
-    # Без явного обращения вмешиваемся только в рабочем чате и лишь иногда
     if not addressed:
-        if not _in_target_chat(update):
-            return
-        if random.random() > config.REPLY_PROBABILITY:
-            return
+        return  # бот молчит, пока к нему явно не обратятся (@упоминание или ответ ему)
 
     await _typing(context, msg.chat_id)
     name = (msg.from_user.first_name if msg.from_user else None) or "Аноним"
@@ -288,6 +284,20 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             extra = f"Сильнее всех просел {losers[0][0]} (−{losers[0][1]})." if losers else ""
             comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals, extra))
             await msg.reply_text(header + hurt + table + "\n\n" + comment)
+            return
+
+        if kind == "result" and intent.get("team_a") and intent.get("team_b"):
+            matches = await asyncio.to_thread(tournament.matches)
+            m = scenario.find_result(matches, str(intent["team_a"]), str(intent["team_b"]))
+            if m is None:
+                await msg.reply_text(
+                    f"Не нашёл сыгранного матча {intent['team_a']}–{intent['team_b']} "
+                    "в таблице результатов."
+                )
+                return
+            fact = scenario.format_result(m)
+            comment = await asyncio.to_thread(brain.scenario_comment, fact)
+            await msg.reply_text(f"⚽ {fact}\n\n{comment}")
             return
 
         if kind == "scenario" and isinstance(intent.get("teams"), dict) and intent["teams"]:

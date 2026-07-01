@@ -118,6 +118,40 @@ def find_fixture(fixtures, team_a: str, team_b: str):
     return None
 
 
+def find_result(matches, team_a: str, team_b: str):
+    """Найти УЖЕ сыгранный матч между двумя командами (по нечётким именам, рус/англ).
+    Если встреч несколько — вернуть самую позднюю."""
+    import schedule_source
+
+    ak = sheet_reader._team_key(team_a)
+    bk = sheet_reader._team_key(team_b)
+    cands = []
+    for m in matches:
+        if not m.played:
+            continue
+        keys = {
+            sheet_reader._team_key(m.home), sheet_reader._team_key(m.away),
+            sheet_reader._team_key(schedule_source.normalize_team(m.home)),
+            sheet_reader._team_key(schedule_source.normalize_team(m.away)),
+        }
+        if ak in keys and bk in keys:
+            cands.append(m)
+    if not cands:
+        return None
+    cands.sort(key=lambda m: (m.dt is not None, m.dt), reverse=True)
+    return cands[0]
+
+
+def format_result(m) -> str:
+    """Строка с результатом матча (русские названия)."""
+    import schedule_source
+
+    home = schedule_source.normalize_team(m.home)
+    away = schedule_source.normalize_team(m.away)
+    winner = schedule_source.normalize_team(m.winner) if m.winner else "ничья"
+    return f"{home} {m.score} {away} ({m.date_raw}, {m.stage}) — {winner}"
+
+
 def find_participant(standings, query: str):
     qk = "".join(ch for ch in query.lower() if ch.isalnum())
     if not qk:

@@ -247,49 +247,66 @@ def _place(totals_map: dict, name: str) -> int:
 
 
 def chance_report(matrix: dict, matches, people, me_name: str, ranked) -> dict:
-    """Полный разбор шансов: место по сетке бота, есть ли расклад на первое место и РЕЦЕПТ —
-    какие команды должны тащить спросившего и чьи «кормильцы»-соперники должны слить."""
+    """Полный разбор шансов через РЕАЛИСТИЧНЫЕ сценарии: за базу берём сетку бота
+    (котировки) и по очереди «дотягиваем» недооценённые ставки спросившего до его
+    прогноза — ровно как рассуждает игрок («если Мексика победит, а остальное как думает бот»).
+    Возвращаем: место по сетке, есть ли путь на первое и КОНКРЕТНЫЙ расклад."""
     r1 = r1_map(people)
     pred = matrix.get("prediction", {})
     current = {p.name: (p.total or 0) for p in people}
     me_cur = current.get(me_name, 0)
     field = [p.name for p in people if p.name != me_name]
-    ahead = [n for n in field if current[n] > me_cur]
-
     predme = lambda t: pred.get(t, {}).get(me_name, 0) or 0
 
     def field_ceiling(t):
         return max((pred.get(t, {}).get(n, 0) or 0) for n in field) if field else 0
 
-    # Реалистичный финиш — по сетке бота (котировки)
-    base_tot = dict(compute_totals(matrix, r1, build_full_scenario(matrix, matches, ranked, {})))
-    # Расстановка, максимально выгодная спросившему против ВСЕГО поля
-    bc = best_case_assignment(matrix, matches, me_name, field)
-    bc_tot = dict(compute_totals(matrix, r1, bc))
-    me_bc = bc_tot.get(me_name, 0)
-    can_first = all(me_bc > v for n, v in bc_tot.items() if n != me_name)
+    elim = eliminated_final_cum(matches)
+    base = build_full_scenario(matrix, matches, ranked, {})
+    base_tot = dict(compute_totals(matrix, r1, base))
+    base_place = _place(base_tot, me_name)
 
-    # Рецепт: кто тащит меня вверх и кто (кормилец соперников) должен слить
-    advance = sorted(
-        [t for t in bc if (bc[t] or 0) > 0 and predme(t) > 0 and predme(t) >= field_ceiling(t)],
-        key=lambda t: -predme(t))[:4]
+    def evaluate(overrides):
+        sc = build_full_scenario(matrix, matches, ranked, overrides)
+        tot = dict(compute_totals(matrix, r1, sc))
+        return _place(tot, me_name), sc
+
+    # Мои команды, которых сетка бота ставит МЕЛЬЧЕ моего прогноза — здесь есть апсайд
+    upside = sorted(
+        [t for t in pred if t not in elim and predme(t) > (base.get(t, 0) or 0)],
+        key=lambda t: -(predme(t) - (base.get(t, 0) or 0)))
+
+    # Жадно наращиваем продвижения, пока не выйдем на первое (или не кончится апсайд)
+    chosen: dict = {}
+    place, sc = base_place, base
+    recipe: list = []
+    for t in upside:
+        if place == 1:
+            break
+        chosen[t] = predme(t)
+        place, sc = evaluate(chosen)
+        recipe.append(t)
+    can_first = place == 1
+    if not can_first:
+        recipe = []  # путь не найден — не показываем недостаточный набор
+
+    advance = [(t, sheet_reader.predicted_label(predme(t))) for t in recipe]
+    # Кормильцы соперников, которые при этом раскладе слетают ниже, чем в сетке бота
     fall = sorted(
-        [t for t in bc if field_ceiling(t) > predme(t) and (bc[t] or 0) < field_ceiling(t)],
-        key=lambda t: -(field_ceiling(t) - predme(t)))[:4]
+        [t for t in sc if (sc.get(t, 0) or 0) < (base.get(t, 0) or 0)
+         and field_ceiling(t) > predme(t)],
+        key=lambda t: -(field_ceiling(t) - predme(t)))[:4] if can_first else []
 
     leader_name = max(current, key=lambda n: current.get(n, 0)) if current else None
-    nearest = sorted(ahead, key=lambda n: current[n])[0] if ahead else None
 
     return {
         "current": round(me_cur, 1),
         "current_place": _place(current, me_name),
         "base_total": round(base_tot.get(me_name, 0), 1),
-        "base_place": _place(base_tot, me_name),
-        "best_place": _place(bc_tot, me_name),
+        "base_place": base_place,
         "can_first": can_first,
         "leader_name": leader_name,
         "leader_total": round(current.get(leader_name, 0), 1) if leader_name else 0,
-        "nearest": nearest,
         "advance": advance,
         "fall": fall,
     }

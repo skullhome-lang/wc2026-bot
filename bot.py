@@ -134,9 +134,11 @@ async def _build_chance_text(matrix: dict, people, me) -> str:
     if rep["can_first"]:
         lines.append("🥇 Но первое ДОСТИЖИМО. Вот расклад:")
         if rep["advance"]:
-            lines.append("• тащат тебя вверх: " + ", ".join(rep["advance"]))
+            lines.append("• твои команды должны зайти: " + ", ".join(
+                f"{t} ({lbl})" if lbl else t for t, lbl in rep["advance"]))
         if rep["fall"]:
-            lines.append("• должны слить (кормильцы конкурентов): " + ", ".join(rep["fall"]))
+            lines.append("• и тогда слетают кормильцы конкурентов: " + ", ".join(rep["fall"]))
+        lines.append("Остальное — как в сетке бота.")
     else:
         lines.append(
             "Первого не видать даже в идеале — твои очки завязаны на те же команды, "

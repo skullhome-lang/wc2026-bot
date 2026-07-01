@@ -98,20 +98,51 @@ def _headline(totals, extra: str = "") -> str:
     return "Топ: " + top + ((". " + extra) if extra else "")
 
 
-def _build_chance_text(people, me) -> str:
-    """Детерминированный вывод про шансы участника (без LLM)."""
+def _chance_text_simple(people, me) -> str:
+    """Фолбэк без котировок: потолок против текущих очков соперников."""
     info = scenario.chance_analysis(people, me)
     text = (f"🎯 {me.name}: сейчас {info['current']} ({info['place']}-е место), "
             f"максимум возможно {info['ceiling']}.\n")
     if info["can_be_first"]:
         text += (f"Математически первое место ещё достижимо: твой потолок ({info['ceiling']}) "
-                 f"не ниже текущих очков всех соперников. Лидер сейчас — {info['leader_name']} "
-                 f"({info['leader_current']}). Конкретный расклад проверь через /scenario.")
+                 f"не ниже текущих очков всех соперников. Лидер — {info['leader_name']} "
+                 f"({info['leader_current']}).")
     else:
         names = ", ".join(f"{p.name} ({p.total})" for p in info["uncatchable"])
         text += (f"Первое место уже не светит: даже твой потолок {info['ceiling']} меньше, чем "
-                 f"уже набрали: {names}. Этих не догнать.")
+                 f"уже набрали: {names}.")
     return text
+
+
+async def _build_chance_text(matrix: dict, people, me) -> str:
+    """Шансы с учётом чужих ставок: место по сетке бота, лучший расклад и рецепт обгона."""
+    ranked = await asyncio.to_thread(tournament.outrights)
+    if not ranked:
+        return _chance_text_simple(people, me)
+    matches = await asyncio.to_thread(tournament.matches)
+    rep = scenario.chance_report(matrix, matches, people, me.name, ranked)
+    lines = [f"🎯 {me.name}: сейчас {rep['current']} ({rep['current_place']}-е место)."]
+
+    if rep["base_place"] == 1:
+        lines.append(f"По реалистичному раскладу (сетка бота) ты уже первый (≈{rep['base_total']}). Не расслабляйся.")
+        return "\n".join(lines)
+
+    lines.append(
+        f"По сетке бота финиш ≈ {rep['base_total']} → {rep['base_place']}-е. "
+        f"Впереди лидер {rep['leader_name']} ({rep['leader_total']})."
+    )
+    if rep["can_first"]:
+        lines.append("🥇 Но первое ДОСТИЖИМО. Вот расклад:")
+        if rep["advance"]:
+            lines.append("• тащат тебя вверх: " + ", ".join(rep["advance"]))
+        if rep["fall"]:
+            lines.append("• должны слить (кормильцы конкурентов): " + ", ".join(rep["fall"]))
+    else:
+        lines.append(
+            "Первого не видать даже в идеале — твои очки завязаны на те же команды, "
+            "что тащат тех, кто уже впереди. Общие ставки поднимают вас обоих."
+        )
+    return "\n".join(lines)
 
 
 def _scenario_from_intent(matrix: dict, teams: dict):
@@ -272,7 +303,8 @@ async def cmd_chance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    summary = _build_chance_text(people, me)
+    matrix = await asyncio.to_thread(tournament.potential)
+    summary = await _build_chance_text(matrix, people, me)
     comment = await asyncio.to_thread(brain.scenario_comment, summary)
     await update.message.reply_text(summary + "\n\n" + comment)
 
@@ -553,7 +585,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target = intent.get("player")
             who = scenario.find_participant(people, str(target)) if target else speaker
             if who:
-                summary = _build_chance_text(people, who)
+                summary = await _build_chance_text(matrix, people, who)
                 comment = await asyncio.to_thread(brain.scenario_comment, summary)
                 await msg.reply_text(summary + "\n\n" + comment)
                 return

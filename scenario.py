@@ -215,6 +215,86 @@ def build_full_scenario(matrix: dict, matches, ranked_outrights, overrides: dict
     return result
 
 
+def best_case_assignment(matrix: dict, matches, asker: str, rivals: list) -> dict:
+    """Расстановка глубин, максимально выгодная спросившему: команды, где у него перевес
+    над соперниками, — как можно глубже; «кормильцы» соперников — на вылет. Слоты соблюдаются."""
+    pred = matrix.get("prediction", {})
+    all_teams = list(pred.keys())
+    elim = eliminated_final_cum(matches)
+
+    def edge(t):
+        a = pred.get(t, {}).get(asker, 0) or 0
+        r = max((pred.get(t, {}).get(n, 0) or 0) for n in rivals) if rivals else 0
+        return a - r
+
+    alive = sorted([t for t in all_teams if t not in elim], key=lambda t: -edge(t))
+    result = dict(elim)
+    idx = 0
+    for cum in _DEPTH_ORDER:
+        for _ in range(_DEPTH_SLOTS[cum]):
+            if idx >= len(alive):
+                break
+            result[alive[idx]] = cum
+            idx += 1
+    for t in alive[idx:]:
+        result[t] = 0.0
+    return result
+
+
+def _place(totals_map: dict, name: str) -> int:
+    v = totals_map.get(name, 0)
+    return 1 + sum(1 for n, x in totals_map.items() if x > v)
+
+
+def chance_report(matrix: dict, matches, people, me_name: str, ranked) -> dict:
+    """Полный разбор шансов: место по сетке бота, есть ли расклад на первое место и РЕЦЕПТ —
+    какие команды должны тащить спросившего и чьи «кормильцы»-соперники должны слить."""
+    r1 = r1_map(people)
+    pred = matrix.get("prediction", {})
+    current = {p.name: (p.total or 0) for p in people}
+    me_cur = current.get(me_name, 0)
+    field = [p.name for p in people if p.name != me_name]
+    ahead = [n for n in field if current[n] > me_cur]
+
+    predme = lambda t: pred.get(t, {}).get(me_name, 0) or 0
+
+    def field_ceiling(t):
+        return max((pred.get(t, {}).get(n, 0) or 0) for n in field) if field else 0
+
+    # Реалистичный финиш — по сетке бота (котировки)
+    base_tot = dict(compute_totals(matrix, r1, build_full_scenario(matrix, matches, ranked, {})))
+    # Расстановка, максимально выгодная спросившему против ВСЕГО поля
+    bc = best_case_assignment(matrix, matches, me_name, field)
+    bc_tot = dict(compute_totals(matrix, r1, bc))
+    me_bc = bc_tot.get(me_name, 0)
+    can_first = all(me_bc > v for n, v in bc_tot.items() if n != me_name)
+
+    # Рецепт: кто тащит меня вверх и кто (кормилец соперников) должен слить
+    advance = sorted(
+        [t for t in bc if (bc[t] or 0) > 0 and predme(t) > 0 and predme(t) >= field_ceiling(t)],
+        key=lambda t: -predme(t))[:4]
+    fall = sorted(
+        [t for t in bc if field_ceiling(t) > predme(t) and (bc[t] or 0) < field_ceiling(t)],
+        key=lambda t: -(field_ceiling(t) - predme(t)))[:4]
+
+    leader_name = max(current, key=lambda n: current.get(n, 0)) if current else None
+    nearest = sorted(ahead, key=lambda n: current[n])[0] if ahead else None
+
+    return {
+        "current": round(me_cur, 1),
+        "current_place": _place(current, me_name),
+        "base_total": round(base_tot.get(me_name, 0), 1),
+        "base_place": _place(base_tot, me_name),
+        "best_place": _place(bc_tot, me_name),
+        "can_first": can_first,
+        "leader_name": leader_name,
+        "leader_total": round(current.get(leader_name, 0), 1) if leader_name else 0,
+        "nearest": nearest,
+        "advance": advance,
+        "fall": fall,
+    }
+
+
 def format_result(m) -> str:
     """Строка с результатом матча (русские названия)."""
     import schedule_source

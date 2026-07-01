@@ -128,6 +128,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/scenario <расклад> — точный пересчёт таблицы (напр.: Аргентина чемпион, Франция финал)\n"
         "/chance [фамилия] — можешь ли ещё стать первым\n"
         "/botpick [матч] — мой прогноз по котировкам против ваших ставок\n"
+        "/botbracket — моя сетка до чемпиона по котировкам\n"
         "/iam <фамилия> — представиться, чтобы я узнавал тебя без @\n"
         "/chatid — id этого чата (для настройки)\n\n"
         "А ещё я иногда сам влезаю с комментарием. Не обессудьте 😏"
@@ -343,6 +344,47 @@ async def cmd_botpick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text + "\n\n" + comment)
 
 
+def _bot_bracket_text(ranked, matrix: dict):
+    """Сетка бота по outright-котировкам: чемпион, финал, 1/2, 1/4 + сравнение с участниками."""
+    if not ranked:
+        return None
+    champ, cp = ranked[0]
+
+    def tier(n):
+        return ", ".join(f"{t} ({odds_source.pct(p)})" for t, p in ranked[:n])
+
+    champ_key = sheet_reader.find_team(matrix, champ) or champ
+    pred = matrix.get("prediction", {}).get(champ_key, {})
+    same = [n for n, v in pred.items() if v and v >= 10.5]
+    txt = (
+        "🤖 Моя сетка по котировкам на победителя:\n"
+        f"🏆 Чемпион: {champ} ({odds_source.pct(cp)})\n"
+        f"Финал: {tier(2)}\n"
+        f"1/2: {tier(4)}\n"
+        f"1/4: {tier(8)}"
+    )
+    if same:
+        txt += f"\n\nВ чемпионы {champ} со мной согласны: {', '.join(same)}."
+    else:
+        txt += f"\n\nВ чемпионы {champ} из вас не поставил никто — либо вы смелые, либо я умнее 😏"
+    return txt
+
+
+async def cmd_botbracket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _typing(context, update.effective_chat.id)
+    ranked = await asyncio.to_thread(tournament.outrights)
+    if not ranked:
+        await update.message.reply_text(
+            "Котировки на победителя турнира пока не получил (ключ/доступ или рынок закрыт). "
+            "Как появятся — построю полную сетку."
+        )
+        return
+    matrix = await asyncio.to_thread(tournament.potential)
+    text = _bot_bracket_text(ranked, matrix)
+    comment = await asyncio.to_thread(brain.scenario_comment, text)
+    await update.message.reply_text(text + "\n\n" + comment)
+
+
 # --------------------------------------------------------------------------- #
 #  Живые реакции на сообщения                                                 #
 # --------------------------------------------------------------------------- #
@@ -437,6 +479,16 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text(text + "\n\n" + comment)
             return
 
+        if kind == "botbracket":
+            ranked = await asyncio.to_thread(tournament.outrights)
+            if not ranked:
+                await msg.reply_text("Котировки на победителя турнира пока недоступны.")
+                return
+            text = _bot_bracket_text(ranked, matrix)
+            comment = await asyncio.to_thread(brain.scenario_comment, text)
+            await msg.reply_text(text + "\n\n" + comment)
+            return
+
         if kind == "result" and intent.get("team_a") and intent.get("team_b"):
             matches = await asyncio.to_thread(tournament.matches)
             m = scenario.find_result(matches, str(intent["team_a"]), str(intent["team_b"]))
@@ -501,6 +553,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("scenario", cmd_scenario))
     app.add_handler(CommandHandler("chance", cmd_chance))
     app.add_handler(CommandHandler(["botpick", "bot"], cmd_botpick))
+    app.add_handler(CommandHandler(["botbracket", "bracket"], cmd_botbracket))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
 

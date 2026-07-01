@@ -81,3 +81,10 @@ def odds(ttl: float = 1800):
         "odds", ttl,
         lambda: odds_source.parse_events(odds_source.fetch_odds(config.ODDS_API_KEY)),
     )
+
+
+def outrights(ttl: float = 3600):
+    """Котировки на победителя турнира: [(команда, вероятность)] (пусто без ключа)."""
+    if not config.ODDS_API_KEY:
+        return []
+    return _cached("outrights", ttl, lambda: odds_source.fetch_outrights(config.ODDS_API_KEY))

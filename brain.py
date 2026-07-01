@@ -81,19 +81,25 @@ def format_standings(people: list[Participant]) -> str:
 
 
 def build_roast_prompt(people: list[Participant], event_note: str = "",
-                       predictions: str = "") -> str:
+                       predictions: str = "", eliminated: str = "") -> str:
     note = f"\nПовод / запрос:\n{event_note}\n" if event_note else ""
     preds = (
         f"\nКто на кого ставил (команда: участники с потолком очков):\n{predictions}\n"
         if predictions else ""
     )
+    elim = (
+        f"\nУЖЕ ВЫЛЕТЕВШИЕ команды (их прогнозы больше не сыграют — не говори, что они "
+        f"могут пройти дальше или стать чемпионами):\n{eliminated}\n"
+        if eliminated else ""
+    )
     return (
         "Текущая турнирная таблица:\n"
-        f"{format_standings(people)}\n{note}{preds}\n"
+        f"{format_standings(people)}\n{note}{preds}{elim}\n"
         "Если выше есть запрос — ответь на него дерзко и по делу; иначе сделай общий "
         "разбор расклада (лидер, аутсайдер, смешное в цифрах, подколи 1–2 участников). "
-        "Опирайся ТОЛЬКО на приведённые данные, не выдумывай. Если спрашивают, кто ставил "
-        "на команду — бери из раздела «кто на кого ставил». 3–6 предложений."
+        "Опирайся ТОЛЬКО на приведённые данные, не выдумывай, и учитывай, кто уже вылетел. "
+        "Если спрашивают, кто ставил на команду — бери из раздела «кто на кого ставил». "
+        "3–6 предложений."
     )
 
 
@@ -204,9 +210,10 @@ def parse_intent(text: str, team_names: list[str]) -> dict:
 #  ПУБЛИЧНЫЕ ГЕНЕРАТОРЫ                                                        #
 # --------------------------------------------------------------------------- #
 def standings_roast(people: list[Participant], event_note: str = "",
-                    predictions: str = "") -> str:
+                    predictions: str = "", eliminated: str = "") -> str:
     # Пониженная температура — меньше «креатива» и выдумок на фактах.
-    return _complete(build_roast_prompt(people, event_note, predictions), temperature=0.6)
+    return _complete(
+        build_roast_prompt(people, event_note, predictions, eliminated), temperature=0.6)
 
 
 def prematch_breakdown(match_info: str, stakes: str = "") -> str:
@@ -229,13 +236,15 @@ def scenario_comment(headline: str) -> str:
 
 
 def chat_reply(user_name: str, text: str, context: str = "",
-               predictions: str = "") -> str:
+               predictions: str = "", eliminated: str = "") -> str:
     ctx = f"\nТаблица:\n{context}\n" if context else ""
     preds = f"\nКто на кого ставил:\n{predictions}\n" if predictions else ""
+    elim = f"\nУже вылетели (их прогнозы больше не сыграют):\n{eliminated}\n" if eliminated else ""
     prompt = (
-        f"Участник {user_name} написал в группе: «{text}»{ctx}{preds}\n"
+        f"Участник {user_name} написал в группе: «{text}»{ctx}{preds}{elim}\n"
         "Ответь коротко и дерзко в своём стиле (1–3 предложения). Опирайся только на "
-        "данные выше, не выдумывай. Если спрашивают, кто на кого ставил — ответь по данным.\n"
+        "данные выше, не выдумывай, учитывай уже вылетевшие команды. Если спрашивают, кто "
+        "на кого ставил — ответь по данным.\n"
         "НЕ напоминай собеседнику его место и очки, если он про это не спрашивал."
     )
     return _complete(prompt, fast=True, max_tokens=400)

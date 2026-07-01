@@ -141,9 +141,10 @@ async def cmd_roast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _typing(context, update.effective_chat.id)
     people = await asyncio.to_thread(tournament.standings)
     preds = await asyncio.to_thread(tournament.predictions_digest)
+    elim = ", ".join(sorted(scenario.eliminated_teams(await asyncio.to_thread(tournament.matches))))
     query = " ".join(context.args).strip() if context.args else ""
     note = f"Запрос от ведущего: {query}" if query else ""
-    text = await asyncio.to_thread(brain.standings_roast, people, note, preds)
+    text = await asyncio.to_thread(brain.standings_roast, people, note, preds, elim)
     await update.message.reply_text(text)
 
 
@@ -165,7 +166,8 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ) or "никто не ставил"
     people = await asyncio.to_thread(tournament.standings)
     note = f"Вопрос: кто поставил на {team}. Данные — на {team} поставили: {backers_text}."
-    text = await asyncio.to_thread(brain.standings_roast, people, note, "")
+    elim = ", ".join(sorted(scenario.eliminated_teams(await asyncio.to_thread(tournament.matches))))
+    text = await asyncio.to_thread(brain.standings_roast, people, note, "", elim)
     await update.message.reply_text(text)
 
 
@@ -321,8 +323,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Обычный разговор
     preds = await asyncio.to_thread(tournament.predictions_digest)
+    elim = ", ".join(sorted(scenario.eliminated_teams(await asyncio.to_thread(tournament.matches))))
     ctx = brain.format_standings(people)
-    reply = await asyncio.to_thread(brain.chat_reply, name, text_in, ctx, preds)
+    reply = await asyncio.to_thread(brain.chat_reply, name, text_in, ctx, preds, elim)
     await msg.reply_text(reply)
 
 

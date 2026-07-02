@@ -19,6 +19,7 @@ from telegram.ext import (
 import brain
 import config
 import identity
+import memory
 import odds_source
 import scenario
 import sheet_reader
@@ -452,6 +453,18 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not msg.text or (msg.from_user and msg.from_user.is_bot):
         return
 
+    people = await asyncio.to_thread(tournament.standings)
+    speaker = _resolve_participant(update, people)
+    name = speaker.name if speaker else ((msg.from_user.first_name if msg.from_user else None) or "Аноним")
+
+    # ПАМЯТЬ: логируем ВСЕ сообщения группы (даже без обращения к боту),
+    # чтобы бот помнил хронологию и мог припомнить, кто что говорил.
+    await asyncio.to_thread(memory.log_message, msg.chat_id, name, msg.text)
+
+    async def say(text: str):
+        await msg.reply_text(text)
+        await asyncio.to_thread(memory.log_bot, msg.chat_id, text)
+
     bot_username = context.bot.username or ""
     bot_id = context.bot.id
     mentioned = bool(bot_username) and f"@{bot_username}" in msg.text
@@ -467,9 +480,6 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await _typing(context, msg.chat_id)
     text_in = msg.text.replace(f"@{bot_username}", "").strip()
-    people = await asyncio.to_thread(tournament.standings)
-    speaker = _resolve_participant(update, people)
-    name = speaker.name if speaker else ((msg.from_user.first_name if msg.from_user else None) or "Аноним")
 
     # При явном обращении пробуем понять «сценарий/шансы» и посчитать точно
     if addressed:
@@ -482,7 +492,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             fixtures = await asyncio.to_thread(tournament.fixtures)
             fx = scenario.find_fixture(fixtures, str(intent["winner"]), str(intent["loser"]))
             if fx is None:
-                await msg.reply_text(
+                await say(
                     f"Не нашёл матч {intent['winner']}–{intent['loser']} в ближайшем "
                     "расписании — возможно, они не встречаются в этом раунде. Можно задать "
                     "стадии напрямую: /scenario."
@@ -497,7 +507,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             l = sheet_reader.find_team(matrix, loser) or loser
             sc, labels = scenario.match_scenario(w, l, fx.stage_code)
             if not sc:
-                await msg.reply_text(
+                await say(
                     "Это групповой этап — там вылет зависит от всей группы, такие расклады "
                     "пока не считаю. В плейофф — без проблем."
                 )
@@ -517,13 +527,13 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             extra = f"Сильнее всех просел {losers[0][0]} (−{losers[0][1]})." if losers else ""
             comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals, extra))
-            await msg.reply_text(header + hurt + table + "\n\n" + comment)
+            await say(header + hurt + table + "\n\n" + comment)
             return
 
         if kind == "botpick":
             events = await asyncio.to_thread(tournament.odds)
             if not events:
-                await msg.reply_text("Котировки пока не подключены — прогноз дать не могу.")
+                await say("Котировки пока не подключены — прогноз дать не могу.")
                 return
             e = None
             if intent.get("team_a") and intent.get("team_b"):
@@ -535,40 +545,40 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = _botpick_list_text(events)
             comment = await asyncio.to_thread(brain.scenario_comment, text)
-            await msg.reply_text(text + "\n\n" + comment)
+            await say(text + "\n\n" + comment)
             return
 
         if kind == "botbracket":
             ranked = await asyncio.to_thread(tournament.outrights)
             if not ranked:
-                await msg.reply_text("Котировки на победителя турнира пока недоступны.")
+                await say("Котировки на победителя турнира пока недоступны.")
                 return
             text = _bot_bracket_text(ranked, matrix)
             comment = await asyncio.to_thread(brain.scenario_comment, text)
-            await msg.reply_text(text + "\n\n" + comment)
+            await say(text + "\n\n" + comment)
             return
 
         if kind == "news":
             items = await asyncio.to_thread(tournament.news)
             if not items:
-                await msg.reply_text("Свежих новостей не нашёл.")
+                await say("Свежих новостей не нашёл.")
                 return
             text = await asyncio.to_thread(brain.news_digest, items)
-            await msg.reply_text("📰 " + text)
+            await say("📰 " + text)
             return
 
         if kind == "result" and intent.get("team_a") and intent.get("team_b"):
             matches = await asyncio.to_thread(tournament.matches)
             m = scenario.find_result(matches, str(intent["team_a"]), str(intent["team_b"]))
             if m is None:
-                await msg.reply_text(
+                await say(
                     f"Не нашёл сыгранного матча {intent['team_a']}–{intent['team_b']} "
                     "в таблице результатов."
                 )
                 return
             fact = scenario.format_result(m)
             comment = await asyncio.to_thread(brain.scenario_comment, fact)
-            await msg.reply_text(f"⚽ {fact}\n\n{comment}")
+            await say(f"⚽ {fact}\n\n{comment}")
             return
 
         if kind == "scenario" and isinstance(intent.get("teams"), dict) and intent["teams"]:
@@ -580,7 +590,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if used_full:
                     table += "\n\n(остальные матчи достроены по моей сетке по котировкам)"
                 comment = await asyncio.to_thread(brain.scenario_comment, _headline(totals))
-                await msg.reply_text(table + "\n\n" + comment)
+                await say(table + "\n\n" + comment)
                 return
 
         if kind == "chance":
@@ -589,17 +599,20 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if who:
                 summary = await _build_chance_text(matrix, people, who)
                 comment = await asyncio.to_thread(brain.scenario_comment, summary)
-                await msg.reply_text(summary + "\n\n" + comment)
+                await say(summary + "\n\n" + comment)
                 return
-            await msg.reply_text("Не понял, про кого шанс. Представься: /iam Фамилия")
+            await say("Не понял, про кого шанс. Представься: /iam Фамилия")
             return
 
-    # Обычный разговор
+    # Обычный разговор — с памятью переписки и антиповтором шуток
     preds = await asyncio.to_thread(tournament.predictions_digest)
     elim = ", ".join(sorted(scenario.eliminated_teams(await asyncio.to_thread(tournament.matches))))
     ctx = brain.format_standings(people)
-    reply = await asyncio.to_thread(brain.chat_reply, name, text_in, ctx, preds, elim)
-    await msg.reply_text(reply)
+    history = await asyncio.to_thread(memory.recent_dialogue, msg.chat_id, 30)
+    jokes = await asyncio.to_thread(memory.recent_jokes, msg.chat_id, 15)
+    reply = await asyncio.to_thread(
+        brain.chat_reply, name, text_in, ctx, preds, elim, history, jokes)
+    await say(reply)
 
 
 # --------------------------------------------------------------------------- #

@@ -453,12 +453,17 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not msg.text or (msg.from_user and msg.from_user.is_bot):
         return
 
-    people = await asyncio.to_thread(tournament.standings)
-    speaker = _resolve_participant(update, people)
-    name = speaker.name if speaker else ((msg.from_user.first_name if msg.from_user else None) or "Аноним")
+    tg_name = (msg.from_user.first_name if msg.from_user else None) or "Аноним"
+    try:
+        people = await asyncio.to_thread(tournament.standings)
+    except Exception:
+        log.exception("standings fetch failed in on_message")
+        people = []
+    speaker = _resolve_participant(update, people) if people else None
+    name = speaker.name if speaker else tg_name
 
     # ПАМЯТЬ: логируем ВСЕ сообщения группы (даже без обращения к боту),
-    # чтобы бот помнил хронологию и мог припомнить, кто что говорил.
+    # чтобы бот помнил хронологию. memory.* никогда не бросает исключений.
     await asyncio.to_thread(memory.log_message, msg.chat_id, name, msg.text)
 
     async def say(text: str):

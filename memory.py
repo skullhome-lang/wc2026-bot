@@ -12,15 +12,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
+
+log = logging.getLogger("wc2026bot.memory")
 
 _LOCK = threading.Lock()
 _PATH = os.path.join(os.path.dirname(__file__), "history.json")
 _MAX = 5000          # сколько записей держим суммарно (старое вытесняется)
 _TEXT_CAP = 600      # обрезаем слишком длинные сообщения
 _BOT = "__bot__"     # маркер реплики самого бота
+
+# ВАЖНО: память — вспомогательная. Любой сбой ввода-вывода здесь НЕ должен ронять
+# обработку сообщений бота. Поэтому все публичные функции гасят исключения.
 
 
 def _load() -> list:
@@ -47,30 +53,44 @@ def _append(entry: dict) -> None:
 
 
 def log_message(chat_id: int, name: str, text: str) -> None:
-    """Записать сообщение участника."""
+    """Записать сообщение участника (никогда не бросает исключений)."""
     if not text:
         return
-    _append({"t": time.time(), "chat": chat_id, "who": name, "text": text[:_TEXT_CAP]})
+    try:
+        _append({"t": time.time(), "chat": chat_id, "who": name, "text": text[:_TEXT_CAP]})
+    except Exception:
+        log.exception("memory.log_message failed")
 
 
 def log_bot(chat_id: int, text: str) -> None:
-    """Записать реплику бота (нужно для антиповтора шуток)."""
+    """Записать реплику бота (никогда не бросает; нужно для антиповтора шуток)."""
     if not text:
         return
-    _append({"t": time.time(), "chat": chat_id, "who": _BOT, "text": text[:_TEXT_CAP]})
+    try:
+        _append({"t": time.time(), "chat": chat_id, "who": _BOT, "text": text[:_TEXT_CAP]})
+    except Exception:
+        log.exception("memory.log_bot failed")
 
 
 def recent_dialogue(chat_id: int, limit: int = 30) -> str:
-    """Последние сообщения чата в формате 'Имя: текст' (реплики бота — как 'Ты (бот)')."""
-    items = [e for e in _load() if e.get("chat") == chat_id]
-    lines = []
-    for e in items[-limit:]:
-        who = "Ты (бот)" if e.get("who") == _BOT else e.get("who", "?")
-        lines.append(f"{who}: {e.get('text', '')}")
-    return "\n".join(lines)
+    """Последние сообщения чата 'Имя: текст' (реплики бота — 'Ты (бот)'). Не бросает."""
+    try:
+        items = [e for e in _load() if e.get("chat") == chat_id]
+        lines = []
+        for e in items[-limit:]:
+            who = "Ты (бот)" if e.get("who") == _BOT else e.get("who", "?")
+            lines.append(f"{who}: {e.get('text', '')}")
+        return "\n".join(lines)
+    except Exception:
+        log.exception("memory.recent_dialogue failed")
+        return ""
 
 
 def recent_jokes(chat_id: int, limit: int = 15) -> str:
-    """Последние реплики бота — чтобы не повторять одни и те же шутки и обороты."""
-    items = [e for e in _load() if e.get("chat") == chat_id and e.get("who") == _BOT]
-    return "\n".join(f"- {e.get('text', '')}" for e in items[-limit:])
+    """Последние реплики бота — чтобы не повторять шутки. Не бросает."""
+    try:
+        items = [e for e in _load() if e.get("chat") == chat_id and e.get("who") == _BOT]
+        return "\n".join(f"- {e.get('text', '')}" for e in items[-limit:])
+    except Exception:
+        log.exception("memory.recent_jokes failed")
+        return ""

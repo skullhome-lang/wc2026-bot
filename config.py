@@ -37,9 +37,12 @@ FOOTBALL_DATA_API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY") or None
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY") or None
 
 # --- Новости (RSS-ленты футбола, без ключей) ---
+# Google News RSS — доступен с сервера (championat/ria блокируются на уровне сети VPS).
+# Запрос «футбол чемпионат мира» на русском. В URL нет запятых — не ломает split ниже.
 _DEFAULT_RSS = (
-    "https://www.championat.com/rss/news/football/,"
-    "https://rsport.ria.ru/export/rss2/football/index.xml"
+    "https://news.google.com/rss/search?q=%D1%84%D1%83%D1%82%D0%B1%D0%BE%D0%BB%20"
+    "%D1%87%D0%B5%D0%BC%D0%BF%D0%B8%D0%BE%D0%BD%D0%B0%D1%82%20%D0%BC%D0%B8%D1%80%D0%B0"
+    "&hl=ru&gl=RU&ceid=RU:ru"
 )
 NEWS_RSS = [u.strip() for u in os.environ.get("NEWS_RSS", _DEFAULT_RSS).split(",") if u.strip()]
 

@@ -117,11 +117,20 @@ def _chance_text_simple(people, me) -> str:
 
 async def _build_chance_text(matrix: dict, people, me) -> str:
     """Шансы с учётом чужих ставок: место по сетке бота, лучший расклад и рецепт обгона."""
-    ranked = await asyncio.to_thread(tournament.outrights)
+    # Котировки могут быть медленными/недоступными — жёсткий таймаут, чтобы не висеть.
+    try:
+        ranked = await asyncio.wait_for(asyncio.to_thread(tournament.outrights), timeout=12)
+    except Exception:
+        log.warning("outrights недоступны/медленны — простой расчёт шанса", exc_info=True)
+        ranked = []
     if not ranked:
         return _chance_text_simple(people, me)
-    matches = await asyncio.to_thread(tournament.matches)
-    rep = scenario.chance_report(matrix, matches, people, me.name, ranked)
+    try:
+        matches = await asyncio.wait_for(asyncio.to_thread(tournament.matches), timeout=12)
+        rep = scenario.chance_report(matrix, matches, people, me.name, ranked)
+    except Exception:
+        log.warning("полный расчёт шанса не удался — простой расчёт", exc_info=True)
+        return _chance_text_simple(people, me)
     lines = [f"🎯 {me.name}: сейчас {rep['current']} ({rep['current_place']}-е место)."]
 
     if rep["base_place"] == 1:
@@ -306,10 +315,22 @@ async def cmd_chance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    matrix = await asyncio.to_thread(tournament.potential)
-    summary = await _build_chance_text(matrix, people, me)
-    comment = await asyncio.to_thread(brain.scenario_comment, summary)
-    await update.message.reply_text(summary + "\n\n" + comment)
+    try:
+        matrix = await asyncio.to_thread(tournament.potential)
+        summary = await _build_chance_text(matrix, people, me)
+    except Exception:
+        log.exception("cmd_chance: расчёт шанса упал")
+        await update.message.reply_text(
+            "Не смог посчитать твой шанс — похоже, данные сейчас недоступны. Попробуй чуть позже."
+        )
+        return
+    # Комментарий от Claude — необязательный: если не вышел, шлём хотя бы расчёт.
+    try:
+        comment = await asyncio.to_thread(brain.scenario_comment, summary)
+    except Exception:
+        log.warning("scenario_comment упал — шлём расчёт без комментария", exc_info=True)
+        comment = ""
+    await update.message.reply_text(summary + ("\n\n" + comment if comment else ""))
 
 
 def _botpick_match_text(matrix: dict, e: dict) -> str:

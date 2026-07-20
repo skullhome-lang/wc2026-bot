@@ -195,6 +195,40 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"chat_id: {update.effective_chat.id}")
 
 
+async def cmd_say(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вещание от имени бота: админ пишет в личку /say <текст>, бот публикует в общий чат."""
+    user = update.effective_user
+    if not user or user.id not in config.ADMIN_IDS:
+        await update.message.reply_text("Эта команда только для админа турнира.")
+        return
+    if update.effective_chat and update.effective_chat.type != "private":
+        await update.message.reply_text("Напиши мне это в личку, а не в общем чате 🤫")
+        return
+    # Берём весь текст после команды (сохраняя переносы строк и пробелы).
+    text = (update.message.text or "").partition(" ")[2].strip()
+    if not text:
+        await update.message.reply_text(
+            "Что опубликовать? Напиши: /say текст сообщения — и я запощу его в общий чат."
+        )
+        return
+    target = config.TELEGRAM_CHAT_ID
+    if not target:
+        await update.message.reply_text(
+            "Не задан общий чат (TELEGRAM_CHAT_ID в .env). Узнать id: набери /chatid в нужном чате."
+        )
+        return
+    try:
+        await context.bot.send_message(chat_id=target, text=text)
+    except Exception:
+        log.exception("cmd_say: не смог отправить в общий чат")
+        await update.message.reply_text(
+            "Не смог опубликовать — проверь, что бот добавлен в чат и TELEGRAM_CHAT_ID верный."
+        )
+        return
+    await asyncio.to_thread(memory.log_bot, target, text)
+    await update.message.reply_text("Опубликовал в чате ✅")
+
+
 async def cmd_iam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Представься фамилией из таблицы, напр.: /iam Кравченко")
@@ -653,6 +687,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
+    app.add_handler(CommandHandler("say", cmd_say))
     app.add_handler(CommandHandler(["iam", "me"], cmd_iam))
     app.add_handler(CommandHandler("whoami", cmd_whoami))
     app.add_handler(CommandHandler(["table", "standings"], cmd_table))

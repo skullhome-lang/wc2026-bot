@@ -46,6 +46,15 @@ _DEFAULT_RSS = (
 )
 NEWS_RSS = [u.strip() for u in os.environ.get("NEWS_RSS", _DEFAULT_RSS).split(",") if u.strip()]
 
+# --- Админы (кому можно вещать от имени бота через /say) ---
+# По умолчанию — Кравченко Константин. Переопределяется переменной ADMIN_IDS
+# (через запятую или пробел). Пример: ADMIN_IDS=436853096,123456789
+_DEFAULT_ADMIN = "436853096"
+ADMIN_IDS = {
+    int(x) for x in os.environ.get("ADMIN_IDS", _DEFAULT_ADMIN).replace(",", " ").split()
+    if x.strip().isdigit()
+}
+
 # --- Поведение ---
 TIMEZONE = os.environ.get("TIMEZONE", "Europe/Moscow")
 ANNOUNCE_HOURS_BEFORE = float(os.environ.get("ANNOUNCE_HOURS_BEFORE", "3"))

@@ -229,6 +229,34 @@ async def cmd_say(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Опубликовал в чате ✅")
 
 
+async def cmd_leave(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выход бота из чата: админ пишет /leave в нужной группе — бот покидает её."""
+    user = update.effective_user
+    if not user or user.id not in config.ADMIN_IDS:
+        await update.message.reply_text("Эта команда только для админа турнира.")
+        return
+    chat = update.effective_chat
+    if chat is None:
+        return
+    if chat.type == "private":
+        await update.message.reply_text(
+            "Это личка — из неё выходить нечем. Отправь /leave в той группе, из которой надо выйти."
+        )
+        return
+    try:
+        await update.message.reply_text("Всё, выхожу из чата. Понадоблюсь — добавьте обратно 👋")
+    except Exception:
+        pass
+    try:
+        await context.bot.leave_chat(chat.id)
+    except Exception:
+        log.exception("cmd_leave: не смог выйти из чата %s", chat.id)
+        try:
+            await update.message.reply_text("Не получилось выйти — проверь мои права в чате.")
+        except Exception:
+            pass
+
+
 async def cmd_iam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Представься фамилией из таблицы, напр.: /iam Кравченко")
@@ -688,6 +716,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("say", cmd_say))
+    app.add_handler(CommandHandler("leave", cmd_leave))
     app.add_handler(CommandHandler(["iam", "me"], cmd_iam))
     app.add_handler(CommandHandler("whoami", cmd_whoami))
     app.add_handler(CommandHandler(["table", "standings"], cmd_table))
